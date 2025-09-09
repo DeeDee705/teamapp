@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, MapPin, Edit2, Trash2, Users } from 'lucide-react';
 import { AppScreen, Location } from '../types';
 import { DataManager } from '../utils/dataManager';

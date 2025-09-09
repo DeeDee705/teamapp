@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { AppScreen } from './types';
 import Home from './components/Home';
 import LocationManager from './components/LocationManager';
@@ -12,6 +12,7 @@ function App() {
   const [screenData, setScreenData] = useState<any>(null);
 
   const handleNavigate = (screen: AppScreen, data?: any) => {
+    console.log('Navigating to:', screen, 'with data:', data);
     setCurrentScreen(screen);
     setScreenData(data);
   };

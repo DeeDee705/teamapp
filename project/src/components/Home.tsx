@@ -1,4 +1,3 @@
-import React from 'react';
 import { Users, UserCheck, Coins } from 'lucide-react';
 import { AppScreen } from '../types';
 
