@@ -1,4 +1,4 @@
-import { Users, UserCheck, Coins } from 'lucide-react';
+import { Users, UserCheck, Coins, Shuffle } from 'lucide-react';
 import { AppScreen } from '../types';
 
 interface HomeProps {
@@ -8,11 +8,18 @@ interface HomeProps {
 export default function Home({ onNavigate }: HomeProps) {
   const features = [
     {
-      id: 'make-teams',
-      title: 'Make Teams',
-      description: 'Create balanced teams from your locations and members',
+      id: 'locations',
+      title: 'Manage Locations',
+      description: 'Add and organize your team locations',
       icon: Users,
       screen: 'locations' as AppScreen
+    },
+    {
+      id: 'team-generator',
+      title: 'Generate Teams',
+      description: 'Create balanced teams with advanced options',
+      icon: Shuffle,
+      screen: 'team-generator' as AppScreen
     },
     {
       id: 'pick-random',
