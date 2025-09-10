@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User } from 'lucide-react';
+import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User, ChevronDown, ChevronRight, Search, CheckSquare, Square } from 'lucide-react';
 import { AppScreen, Location, Group, Member, Gender } from '../types';
 import { DataManager } from '../utils/dataManager';
 import { APP_CONFIG } from '../config/app';
@@ -33,6 +33,10 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
     groupId: null as string | null
   });
   
+  // Group UI state
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [groupSearches, setGroupSearches] = useState<Record<string, string>>({});
+  
   const [error, setError] = useState('');
 
   const dataManager = DataManager.getInstance();
@@ -40,6 +44,21 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   useEffect(() => {
     loadLocations();
   }, []);
+
+  useEffect(() => {
+    // Apply default collapse setting when location changes
+    if (selectedLocation) {
+      const settings = dataManager.getSettings();
+      if (settings.defaultCollapseGroups) {
+        const collapsed: Record<string, boolean> = {};
+        selectedLocation.groups.forEach(group => {
+          const memberCount = groupedMembers[group.id]?.length || 0;
+          collapsed[group.id] = memberCount > 10; // Collapse groups with > 10 members
+        });
+        setExpandedGroups(collapsed);
+      }
+    }
+  }, [selectedLocation]);
 
   useEffect(() => {
     if (selectedLocationId) {
@@ -161,6 +180,35 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   const handleMoveMember = (memberId: string, toGroupId: string | null) => {
     dataManager.moveMember(selectedLocationId, memberId, toGroupId);
     loadLocations();
+  };
+
+  const toggleGroupExpanded = (groupId: string) => {
+    setExpandedGroups(prev => ({
+      ...prev,
+      [groupId]: !prev[groupId]
+    }));
+  };
+
+  const handleGroupSearch = (groupId: string, search: string) => {
+    setGroupSearches(prev => ({
+      ...prev,
+      [groupId]: search
+    }));
+  };
+
+  const toggleAllGroupPresence = (groupId: string | null, isPresent: boolean) => {
+    const members = groupedMembers[groupId || 'unassigned'] || [];
+    members.forEach(member => {
+      dataManager.updateMemberPresence(selectedLocationId, member.id, isPresent);
+    });
+    loadLocations();
+  };
+
+  const filterMembersBySearch = (members: Member[], search: string) => {
+    if (!search.trim()) return members;
+    return members.filter(member => 
+      member.name.toLowerCase().includes(search.toLowerCase())
+    );
   };
 
   const handleGenerateTeams = () => {
@@ -484,106 +532,260 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                 </div>
               )}
 
-              {/* Grouped Members Display */}
-              <div className="space-y-4">
-                {/* Unassigned Members */}
-                {groupedMembers.unassigned && groupedMembers.unassigned.length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-gray-400 mb-2">Unassigned ({groupedMembers.unassigned.length})</h4>
-                    <div className="space-y-2">
-                      {groupedMembers.unassigned.map(member => (
-                        <div key={member.id} className="flex items-center justify-between p-3 bg-[#2a2a2a] rounded-lg">
-                          <div className="flex items-center space-x-3">
-                            <button
-                              onClick={() => handleTogglePresence(member.id, !member.isPresent)}
-                              className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                member.isPresent 
-                                  ? 'bg-green-500 border-green-500 text-white' 
-                                  : 'border-gray-400 text-gray-400'
-                              }`}
-                            >
-                              {member.isPresent && <UserCheck size={14} />}
-                            </button>
-                            <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
-                            <div>
-                              <div className="font-medium">{member.name}</div>
-                              <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
-                            </div>
-                            <div className="flex space-x-1">
-                              {renderSkillStars(member.skillLevel)}
-                            </div>
-                          </div>
-                          <select
-                            value={member.groupId || ''}
-                            onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
-                            className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#F27A6B]"
-                          >
-                            <option value="">Unassigned</option>
-                            {selectedLocation.groups.map(group => (
-                              <option key={group.id} value={group.id}>{group.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Grouped Members */}
-                {selectedLocation.groups.map(group => {
-                  const members = groupedMembers[group.id] || [];
-                  if (members.length === 0) return null;
-                  
-                  return (
-                    <div key={group.id}>
-                      <h4 className="font-medium text-[#F27A6B] mb-2">{group.name} ({members.length})</h4>
-                      <div className="space-y-2">
-                        {members.map(member => (
-                          <div key={member.id} className="flex items-center justify-between p-3 bg-[#2a2a2a] rounded-lg">
+              {/* Group-aware Members Display */}
+              {selectedLocation.groups.length > 0 ? (
+                <div className="space-y-3">
+                  {/* Grouped Members */}
+                  {selectedLocation.groups.map(group => {
+                    const members = groupedMembers[group.id] || [];
+                    const isExpanded = expandedGroups[group.id] ?? true;
+                    const search = groupSearches[group.id] || '';
+                    const filteredMembers = filterMembersBySearch(members, search);
+                    const presentCount = members.filter(m => m.isPresent).length;
+                    
+                    return (
+                      <div key={group.id} className="bg-[#2a2a2a] rounded-lg border border-[#3a3a3a]">
+                        {/* Group Header */}
+                        <div className="p-4">
+                          <div className="flex items-center justify-between">
                             <div className="flex items-center space-x-3">
                               <button
-                                onClick={() => handleTogglePresence(member.id, !member.isPresent)}
-                                className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                  member.isPresent 
-                                    ? 'bg-green-500 border-green-500 text-white' 
-                                    : 'border-gray-400 text-gray-400'
-                                }`}
+                                onClick={() => toggleGroupExpanded(group.id)}
+                                className="text-[#f2ebc4] hover:text-[#F27A6B] transition-colors"
                               >
-                                {member.isPresent && <UserCheck size={14} />}
+                                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                               </button>
-                              <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
-                              <div>
-                                <div className="font-medium">{member.name}</div>
-                                <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
-                              </div>
-                              <div className="flex space-x-1">
-                                {renderSkillStars(member.skillLevel)}
-                              </div>
+                              <input
+                                type="checkbox"
+                                checked={selectedGroupIds.includes(group.id)}
+                                onChange={() => handleToggleGroupSelection(group.id)}
+                                className="w-4 h-4 rounded"
+                              />
+                              <h4 className="font-medium text-[#f2ebc4]">
+                                {group.name} ({members.length} members, {presentCount} present)
+                              </h4>
                             </div>
-                            <select
-                              value={member.groupId || ''}
-                              onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
-                              className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#F27A6B]"
-                            >
-                              <option value="">Unassigned</option>
-                              {selectedLocation.groups.map(g => (
-                                <option key={g.id} value={g.id}>{g.name}</option>
-                              ))}
-                            </select>
+                            <div className="flex items-center space-x-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEditGroup(group);
+                                }}
+                                className="p-1 text-[#F27A6B] hover:bg-[#F27A6B] hover:bg-opacity-20 rounded transition-colors"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteGroup(group.id);
+                                }}
+                                className="p-1 text-red-400 hover:bg-red-400 hover:bg-opacity-20 rounded transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </div>
-                        ))}
+                        </div>
+
+                        {/* Group Content (when expanded) */}
+                        {isExpanded && (
+                          <div className="px-4 pb-4">
+                            {/* Group Toolbar */}
+                            <div className="flex items-center space-x-2 mb-3">
+                              <div className="flex-1 relative">
+                                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                                <input
+                                  type="text"
+                                  placeholder="Search members..."
+                                  value={search}
+                                  onChange={(e) => handleGroupSearch(group.id, e.target.value)}
+                                  className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg pl-10 pr-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                />
+                              </div>
+                              <button
+                                onClick={() => toggleAllGroupPresence(group.id, true)}
+                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
+                                title="Mark all present"
+                              >
+                                <CheckSquare size={14} />
+                              </button>
+                              <button
+                                onClick={() => toggleAllGroupPresence(group.id, false)}
+                                className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
+                                title="Mark all absent"
+                              >
+                                <Square size={14} />
+                              </button>
+                            </div>
+
+                            {/* Members List */}
+                            {filteredMembers.length > 0 ? (
+                              <div className="space-y-2">
+                                {filteredMembers.map(member => (
+                                  <div key={member.id} className="flex items-center justify-between p-3 bg-[#3a3a3a] rounded-lg">
+                                    <div className="flex items-center space-x-3">
+                                      <button
+                                        onClick={() => handleTogglePresence(member.id, !member.isPresent)}
+                                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                          member.isPresent 
+                                            ? 'bg-green-500 border-green-500 text-white' 
+                                            : 'border-gray-400 text-gray-400'
+                                        }`}
+                                      >
+                                        {member.isPresent && <UserCheck size={14} />}
+                                      </button>
+                                      <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
+                                      <div>
+                                        <div className="font-medium">{member.name}</div>
+                                        <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
+                                      </div>
+                                      <div className="flex space-x-1">
+                                        {renderSkillStars(member.skillLevel)}
+                                      </div>
+                                    </div>
+                                    <select
+                                      value={member.groupId || ''}
+                                      onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
+                                      className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                    >
+                                      <option value="">Unassigned</option>
+                                      {selectedLocation.groups.map(g => (
+                                        <option key={g.id} value={g.id}>{g.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : members.length > 0 ? (
+                              <div className="text-center py-4 text-gray-400">
+                                No members match "{search}"
+                              </div>
+                            ) : (
+                              <div className="text-center py-4 text-gray-400">
+                                No members in this group
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Unassigned Members */}
+                  {groupedMembers.unassigned && groupedMembers.unassigned.length > 0 && (
+                    <div className="bg-[#2a2a2a] rounded-lg border border-[#3a3a3a]">
+                      <div className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <button
+                              onClick={() => toggleGroupExpanded('unassigned')}
+                              className="text-[#f2ebc4] hover:text-[#F27A6B] transition-colors"
+                            >
+                              {expandedGroups.unassigned ?? true ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                            </button>
+                            <h4 className="font-medium text-gray-400">
+                              Unassigned ({groupedMembers.unassigned.length} members)
+                            </h4>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => toggleAllGroupPresence(null, true)}
+                              className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
+                              title="Mark all present"
+                            >
+                              <CheckSquare size={14} />
+                            </button>
+                            <button
+                              onClick={() => toggleAllGroupPresence(null, false)}
+                              className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
+                              title="Mark all absent"
+                            >
+                              <Square size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {(expandedGroups.unassigned ?? true) && (
+                        <div className="px-4 pb-4">
+                          <div className="space-y-2">
+                            {groupedMembers.unassigned.map(member => (
+                              <div key={member.id} className="flex items-center justify-between p-3 bg-[#3a3a3a] rounded-lg">
+                                <div className="flex items-center space-x-3">
+                                  <button
+                                    onClick={() => handleTogglePresence(member.id, !member.isPresent)}
+                                    className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                      member.isPresent 
+                                        ? 'bg-green-500 border-green-500 text-white' 
+                                        : 'border-gray-400 text-gray-400'
+                                    }`}
+                                  >
+                                    {member.isPresent && <UserCheck size={14} />}
+                                  </button>
+                                  <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
+                                  <div>
+                                    <div className="font-medium">{member.name}</div>
+                                    <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
+                                  </div>
+                                  <div className="flex space-x-1">
+                                    {renderSkillStars(member.skillLevel)}
+                                  </div>
+                                </div>
+                                <select
+                                  value={member.groupId || ''}
+                                  onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
+                                  className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {selectedLocation.groups.map(group => (
+                                    <option key={group.id} value={group.id}>{group.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Fallback to simple list when no groups exist */
+                <div className="space-y-2">
+                  {selectedLocation.members.map(member => (
+                    <div key={member.id} className="flex items-center justify-between p-3 bg-[#2a2a2a] rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <button
+                          onClick={() => handleTogglePresence(member.id, !member.isPresent)}
+                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+                            member.isPresent 
+                              ? 'bg-green-500 border-green-500 text-white' 
+                              : 'border-gray-400 text-gray-400'
+                          }`}
+                        >
+                          {member.isPresent && <UserCheck size={14} />}
+                        </button>
+                        <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
+                        <div>
+                          <div className="font-medium">{member.name}</div>
+                          <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
+                        </div>
+                        <div className="flex space-x-1">
+                          {renderSkillStars(member.skillLevel)}
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
+              )}
 
-                {selectedLocation.members.length === 0 && (
-                  <div className="text-center py-8">
-                    <User size={48} className="mx-auto mb-2 opacity-40" />
-                    <p className="text-sm opacity-60">No members yet. Add your first member to get started.</p>
-                  </div>
-                )}
-              </div>
+              {selectedLocation.members.length === 0 && (
+                <div className="text-center py-8">
+                  <User size={48} className="mx-auto mb-2 opacity-40" />
+                  <p className="text-sm opacity-60">No members yet. Add your first member to get started.</p>
+                </div>
+              )}
             </div>
 
             {/* Footer Actions */}
