@@ -1,14 +1,18 @@
-import { Location, Member, Group } from '../types';
+import { Location, Member, Group, AppSettings } from '../types';
 import { APP_CONFIG } from '../config/app';
+import { DEFAULT_SETTINGS } from '../config/settings';
 
 const STORAGE_KEY = 'team-management-data';
+const SETTINGS_KEY = 'team-management-settings';
 
 export class DataManager {
   private static instance: DataManager;
   private locations: Location[] = [];
+  private settings: AppSettings = DEFAULT_SETTINGS;
 
   private constructor() {
     this.loadData();
+    this.loadSettings();
   }
 
   public static getInstance(): DataManager {
@@ -210,5 +214,42 @@ export class DataManager {
 
   public moveMember(locationId: string, memberId: string, toGroupId: string | null): void {
     this.assignMemberToGroup(locationId, memberId, toGroupId);
+  }
+
+  // Settings methods
+  public getSettings(): AppSettings {
+    return { ...this.settings };
+  }
+
+  public updateSettings(patch: Partial<AppSettings>): void {
+    this.settings = { ...this.settings, ...patch };
+    this.saveSettings();
+  }
+
+  private loadSettings(): void {
+    const data = localStorage.getItem(SETTINGS_KEY);
+    if (data) {
+      try {
+        const savedSettings = JSON.parse(data);
+        this.settings = { ...DEFAULT_SETTINGS, ...savedSettings };
+      } catch (error) {
+        console.error('Failed to load settings:', error);
+        this.settings = DEFAULT_SETTINGS;
+      }
+    } else {
+      this.settings = DEFAULT_SETTINGS;
+    }
+  }
+
+  private saveSettings(): void {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
+  }
+
+  // Dangerous action
+  public deleteAllMembers(): void {
+    this.locations.forEach(location => {
+      location.members = [];
+    });
+    this.saveData();
   }
 }
