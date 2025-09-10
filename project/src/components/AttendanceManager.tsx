@@ -467,33 +467,39 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                       onChange={(e) => setNewMember(prev => ({ ...prev, name: e.target.value }))}
                       className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
                     />
-                    <input
-                      type="number"
-                      placeholder="Birth Year"
-                      value={newMember.birthYear}
-                      onChange={(e) => setNewMember(prev => ({ ...prev, birthYear: parseInt(e.target.value) || new Date().getFullYear() - 25 }))}
-                      className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                    />
-                    <select
-                      value={newMember.gender}
-                      onChange={(e) => setNewMember(prev => ({ ...prev, gender: e.target.value as Gender }))}
-                      className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                    >
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
-                    </select>
-                    <select
-                      value={newMember.skillLevel}
-                      onChange={(e) => setNewMember(prev => ({ ...prev, skillLevel: parseInt(e.target.value) as 1 | 2 | 3 | 4 | 5 }))}
-                      className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                    >
-                      <option value={1}>Skill Level 1</option>
-                      <option value={2}>Skill Level 2</option>
-                      <option value={3}>Skill Level 3</option>
-                      <option value={4}>Skill Level 4</option>
-                      <option value={5}>Skill Level 5</option>
-                    </select>
+                    {settings.showAge && (
+                      <input
+                        type="number"
+                        placeholder="Birth Year"
+                        value={newMember.birthYear}
+                        onChange={(e) => setNewMember(prev => ({ ...prev, birthYear: parseInt(e.target.value) || new Date().getFullYear() - 25 }))}
+                        className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                      />
+                    )}
+                    {settings.showGender && (
+                      <select
+                        value={newMember.gender}
+                        onChange={(e) => setNewMember(prev => ({ ...prev, gender: e.target.value as Gender }))}
+                        className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                      >
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    )}
+                    {settings.showSkill && (
+                      <select
+                        value={newMember.skillLevel}
+                        onChange={(e) => setNewMember(prev => ({ ...prev, skillLevel: parseInt(e.target.value) as 1 | 2 | 3 | 4 | 5 }))}
+                        className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                      >
+                        <option value={1}>Skill Level 1</option>
+                        <option value={2}>Skill Level 2</option>
+                        <option value={3}>Skill Level 3</option>
+                        <option value={4}>Skill Level 4</option>
+                        <option value={5}>Skill Level 5</option>
+                      </select>
+                    )}
                   </div>
                   <select
                     value={newMember.groupId || ''}
@@ -635,14 +641,16 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                                       >
                                         {member.isPresent && <UserCheck size={14} />}
                                       </button>
-                                      <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
+                                      {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
                                       <div>
                                         <div className="font-medium">{member.name}</div>
-                                        <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
+                                        {settings.showAge && <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>}
                                       </div>
-                                      <div className="flex space-x-1">
-                                        {renderSkillStars(member.skillLevel)}
-                                      </div>
+                                      {settings.showSkill && (
+                                        <div className="flex space-x-1">
+                                          {renderSkillStars(member.skillLevel)}
+                                        </div>
+                                      )}
                                     </div>
                                     <select
                                       value={member.groupId || ''}
@@ -723,14 +731,16 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                                   >
                                     {member.isPresent && <UserCheck size={14} />}
                                   </button>
-                                  <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
+                                  {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
                                   <div>
                                     <div className="font-medium">{member.name}</div>
-                                    <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
+                                    {settings.showAge && <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>}
                                   </div>
-                                  <div className="flex space-x-1">
-                                    {renderSkillStars(member.skillLevel)}
-                                  </div>
+                                  {settings.showSkill && (
+                                    <div className="flex space-x-1">
+                                      {renderSkillStars(member.skillLevel)}
+                                    </div>
+                                  )}
                                 </div>
                                 <select
                                   value={member.groupId || ''}
@@ -766,14 +776,16 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                         >
                           {member.isPresent && <UserCheck size={14} />}
                         </button>
-                        <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>
+                        {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
                         <div>
                           <div className="font-medium">{member.name}</div>
-                          <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>
+                          {settings.showAge && <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>}
                         </div>
-                        <div className="flex space-x-1">
-                          {renderSkillStars(member.skillLevel)}
-                        </div>
+                        {settings.showSkill && (
+                          <div className="flex space-x-1">
+                            {renderSkillStars(member.skillLevel)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, User, Edit2, Trash2, Star } from 'lucide-react';
 import { AppScreen, Member, Location } from '../types';
 import { DataManager } from '../utils/dataManager';
@@ -16,7 +16,7 @@ export default function MemberManager({ locationId, onNavigate }: MemberManagerP
     name: '',
     birthYear: new Date().getFullYear() - 25,
     gender: 'Male' as 'Male' | 'Female' | 'Other',
-    skillLevel: 3
+    skillLevel: 3 as 1 | 2 | 3 | 4 | 5
   });
   const [error, setError] = useState('');
 
@@ -37,7 +37,7 @@ export default function MemberManager({ locationId, onNavigate }: MemberManagerP
       name: '',
       birthYear: new Date().getFullYear() - 25,
       gender: 'Male',
-      skillLevel: 3
+      skillLevel: 3 as 1 | 2 | 3 | 4 | 5
     });
     setError('');
   };
@@ -210,7 +210,7 @@ export default function MemberManager({ locationId, onNavigate }: MemberManagerP
                   {[1, 2, 3, 4, 5].map((level) => (
                     <button
                       key={level}
-                      onClick={() => setFormData({ ...formData, skillLevel: level })}
+                      onClick={() => setFormData({ ...formData, skillLevel: level as 1 | 2 | 3 | 4 | 5 })}
                       className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
                         formData.skillLevel === level
                           ? 'bg-[#f2e205] text-[#0d0d0d]'
@@ -306,7 +306,7 @@ export default function MemberManager({ locationId, onNavigate }: MemberManagerP
                         </span>
                       </div>
                       <div className={`flex items-center space-x-4 text-sm mt-1 ${!member.isPresent ? 'opacity-50' : 'opacity-60'}`}>
-                        <span>Age: {member.age}</span>
+                        <span>Age: {new Date().getFullYear() - member.birthYear}</span>
                         <div className="flex items-center space-x-1">
                           <span>Skill:</span>
                           <div className="flex">

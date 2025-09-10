@@ -25,6 +25,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
   const [showSettings, setShowSettings] = useState(false);
 
   const dataManager = DataManager.getInstance();
+  const settings = dataManager.getSettings();
 
   useEffect(() => {
     loadData();
@@ -61,8 +62,9 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
     
     setPresentMembers(members);
     
-    // Adjust number of teams based on available members
-    const maxTeams = Math.max(2, Math.min(8, Math.floor(members.length / 2)));
+    // Adjust number of teams based on available members and settings
+    const divisor = settings.teamClampRule === 'conservative' ? 2 : 1;
+    const maxTeams = Math.max(2, Math.min(8, Math.floor(members.length / divisor)));
     if (generationOptions.numberOfTeams > maxTeams) {
       setGenerationOptions(prev => ({ ...prev, numberOfTeams: maxTeams }));
     }
@@ -184,7 +186,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
               <input
                 type="range"
                 min="2"
-                max={Math.min(8, Math.floor(presentMembers.length / 2) || 2)}
+                max={Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1)) || 2)}
                 value={generationOptions.numberOfTeams}
                 onChange={(e) => setGenerationOptions(prev => ({ 
                   ...prev, 
@@ -194,7 +196,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
               />
               <div className="flex justify-between text-xs opacity-60 mt-1">
                 <span>2</span>
-                <span>{Math.min(8, Math.floor(presentMembers.length / 2) || 2)}</span>
+                <span>{Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1)) || 2)}</span>
               </div>
             </div>
 
@@ -292,8 +294,12 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                 <div key={member.id} className="bg-[#2a2a2a] rounded-lg p-2">
                   <div className="font-medium text-sm">{member.name}</div>
                   <div className="flex items-center justify-between text-xs opacity-60">
-                    <span>{member.gender}, {new Date().getFullYear() - member.birthYear}y</span>
-                    <div className="flex">{getSkillStars(member.skillLevel)}</div>
+                    <span>
+                      {settings.showGender && `${member.gender}`}
+                      {settings.showGender && settings.showAge && ', '}
+                      {settings.showAge && `${new Date().getFullYear() - member.birthYear}y`}
+                    </span>
+                    {settings.showSkill && <div className="flex">{getSkillStars(member.skillLevel)}</div>}
                   </div>
                 </div>
               ))}
@@ -365,12 +371,16 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                       <div>
                         <span className="font-medium">{member.name}</span>
                         <span className="text-sm opacity-60 ml-2">
-                          {member.gender}, {new Date().getFullYear() - member.birthYear}y
+                          {settings.showGender && member.gender}
+                          {settings.showGender && settings.showAge && ', '}
+                          {settings.showAge && `${new Date().getFullYear() - member.birthYear}y`}
                         </span>
                       </div>
-                      <div className="flex">
-                        {getSkillStars(member.skillLevel)}
-                      </div>
+                      {settings.showSkill && (
+                        <div className="flex">
+                          {getSkillStars(member.skillLevel)}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
