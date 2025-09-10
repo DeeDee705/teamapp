@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, MapPin, Edit2, Trash2, Users, UserCheck, Star, Calendar, User } from 'lucide-react';
+import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User } from 'lucide-react';
 import { AppScreen, Location, Group, Member, Gender } from '../types';
 import { DataManager } from '../utils/dataManager';
 import { APP_CONFIG } from '../config/app';

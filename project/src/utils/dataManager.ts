@@ -88,14 +88,13 @@ export class DataManager {
   }
 
   // Member methods
-  public addMember(locationId: string, member: Omit<Member, 'id' | 'age'>): Member {
+  public addMember(locationId: string, member: Omit<Member, 'id'>): Member {
     const location = this.locations.find(loc => loc.id === locationId);
     if (!location) throw new Error('Location not found');
 
     const newMember: Member = {
       ...member,
-      id: Date.now().toString(),
-      age: new Date().getFullYear() - member.birthYear
+      id: Date.now().toString()
     };
 
     location.members.push(newMember);
@@ -110,9 +109,6 @@ export class DataManager {
     const member = location.members.find(m => m.id === memberId);
     if (member) {
       Object.assign(member, updates);
-      if (updates.birthYear) {
-        member.age = new Date().getFullYear() - updates.birthYear;
-      }
       this.saveData();
     }
   }

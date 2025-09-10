@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AppScreen } from './types';
 import Home from './components/Home';
-import LocationManager from './components/LocationManager';
+import AttendanceManager from './components/AttendanceManager';
 import MemberManager from './components/MemberManager';
 import TeamGenerator from './components/TeamGenerator';
 import RandomPicker from './components/RandomPicker';
@@ -23,7 +23,7 @@ function App() {
         return <Home onNavigate={handleNavigate} />;
       
       case 'locations':
-        return <LocationManager onNavigate={handleNavigate} />;
+        return <AttendanceManager onNavigate={handleNavigate} />;
       
       case 'members':
         return (
@@ -34,7 +34,7 @@ function App() {
         );
       
       case 'team-generator':
-        return <TeamGenerator onNavigate={handleNavigate} />;
+        return <TeamGenerator onNavigate={handleNavigate} screenData={screenData} />;
       
       case 'random-picker':
         return <RandomPicker onNavigate={handleNavigate} />;

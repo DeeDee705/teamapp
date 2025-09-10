@@ -1,4 +1,4 @@
-import { Users, UserCheck, Coins, Shuffle } from 'lucide-react';
+import { UserCheck, Coins, Shuffle } from 'lucide-react';
 import { AppScreen } from '../types';
 
 interface HomeProps {

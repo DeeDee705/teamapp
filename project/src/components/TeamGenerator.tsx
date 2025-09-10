@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, Users, Settings, Shuffle, CheckCircle, User, Star } from 'lucide-react';
 import { AppScreen, Location, Member, Team, TeamGenerationOptions } from '../types';
 import { DataManager } from '../utils/dataManager';
@@ -6,9 +6,13 @@ import { TeamBalancer } from '../utils/teamBalancer';
 
 interface TeamGeneratorProps {
   onNavigate: (screen: AppScreen, data?: any) => void;
+  screenData?: {
+    selectedLocationId?: string;
+    selectedGroupIds?: string[];
+  };
 }
 
-export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
+export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorProps) {
   const [locations, setLocations] = useState<Location[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [presentMembers, setPresentMembers] = useState<Member[]>([]);
@@ -33,13 +37,28 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
   const loadData = () => {
     const allLocations = dataManager.getLocations();
     setLocations(allLocations);
-    if (allLocations.length > 0) {
+    
+    // If we have navigation data from AttendanceManager, use it
+    if (screenData?.selectedLocationId) {
+      setSelectedLocations([screenData.selectedLocationId]);
+    } else if (allLocations.length > 0) {
       setSelectedLocations([allLocations[0].id]);
     }
   };
 
   const updatePresentMembers = () => {
-    const members = dataManager.getPresentMembers(selectedLocations);
+    let members: Member[];
+    
+    // If we have group-based selection from AttendanceManager, use it
+    if (screenData?.selectedLocationId && screenData?.selectedGroupIds?.length) {
+      members = dataManager.getPresentMembersByGroups(
+        screenData.selectedLocationId, 
+        screenData.selectedGroupIds
+      );
+    } else {
+      members = dataManager.getPresentMembers(selectedLocations);
+    }
+    
     setPresentMembers(members);
     
     // Adjust number of teams based on available members
@@ -273,7 +292,7 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                 <div key={member.id} className="bg-[#2a2a2a] rounded-lg p-2">
                   <div className="font-medium text-sm">{member.name}</div>
                   <div className="flex items-center justify-between text-xs opacity-60">
-                    <span>{member.gender}, {member.age}y</span>
+                    <span>{member.gender}, {new Date().getFullYear() - member.birthYear}y</span>
                     <div className="flex">{getSkillStars(member.skillLevel)}</div>
                   </div>
                 </div>
@@ -346,7 +365,7 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                       <div>
                         <span className="font-medium">{member.name}</span>
                         <span className="text-sm opacity-60 ml-2">
-                          {member.gender}, {member.age}y
+                          {member.gender}, {new Date().getFullYear() - member.birthYear}y
                         </span>
                       </div>
                       <div className="flex">
