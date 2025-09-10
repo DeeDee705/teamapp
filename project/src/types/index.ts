@@ -53,6 +53,18 @@ export interface AppConfig {
   MAX_GROUPS_PER_LOCATION: number; // default 8, can be increased to 50
 }
 
+// Settings interface
+export interface AppSettings {
+  showSkill: boolean;
+  showGender: boolean;
+  showAge: boolean;
+  maxGroupsPerLocation: number; // default 8, allow up to 50
+  defaultCollapseGroups: boolean;
+  teamClampRule: 'conservative' | 'relaxed'; // n/2 vs n
+  defaultAlgorithm: 'balanced';
+  persistFilters: boolean;
+}
+
 export type AppScreen = 
   | 'home' 
   | 'locations' 

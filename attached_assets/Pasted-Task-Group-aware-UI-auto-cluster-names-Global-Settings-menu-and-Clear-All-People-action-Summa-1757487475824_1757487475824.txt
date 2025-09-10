@@ -1,0 +1,240 @@
+Task: Group-aware UI (auto-cluster names), Global Settings menu, and “Clear All People” action
+Summary
+
+Improve UX to reduce clutter and give admins control:
+
+When groups exist in a location, show members inside their group card (collapsed by default per group, expandable), rather than one long list.
+
+Add a global Settings menu (hamburger/cog in top-right) to customize app behavior (e.g., hide skill level).
+
+Add a “Clear All People” action that removes all members at once (with a strong confirmation).
+
+Keep everything compatible with current Team Generator & Attendance flows.
+
+UI requirements
+A) Group-aware member layout
+
+In AttendanceManager (or the screen where you manage people):
+
+If the selected location has ≥ 1 group, render one card per group.
+
+Each group card shows:
+
+Group name + member count
+
+“Selected for activity” checkbox (if you already support that)
+
+Collapse/expand toggle (default collapsed for groups with > 10 members)
+
+Inside an expanded group, list only that group’s members with presence toggles and “Move to group” control.
+
+Provide a final “Unassigned” group card for members without groupId.
+
+If no groups exist, fall back to the current single list.
+
+Bonus (nice UX):
+
+Add a small search input per group card (filters names in that group only).
+
+Add “Select none / all present” toolbar per group (checkbox that toggles presence for all members in that group).
+
+B) Global Settings
+
+Add a hamburger or cog button in the top-right of the app shell (e.g., in the header bar).
+
+Clicking opens a Settings modal/drawer with toggles stored in DataManager (or a settingsStore):
+
+Show Skill Level (default: on)
+
+Show Gender (default: on)
+
+Show Age (default: on)
+
+Max Groups per Location (number input, default from config; enforce upper bound 50)
+
+Default Collapse Groups (on/off; when on, all groups load collapsed)
+
+Team Count Clamp Rule (dropdown):
+
+“Conservative (n/2)”
+
+“Relaxed (n)”
+
+Default Team Algorithm (currently “balanced”, but keep as a select for future)
+
+Persist Filters Between Sessions (on/off)
+
+All toggles should immediately affect visible UI (e.g., hiding skill stars across lists/cards if turned off).
+
+Persist settings to local storage (or your existing persistence layer) so they survive reloads.
+
+C) “Clear All People” (dangerous)
+
+In Settings (and optionally in Attendance screen toolbar), add “Clear All People”.
+
+UX:
+
+Clicking shows a modal:
+
+Title: “Delete ALL people?”
+
+Warning text: “This will permanently remove all members across all locations. This cannot be undone.”
+
+Require the user to type DELETE to enable the confirm button.
+
+Confirm button label: I understand – delete everyone
+
+After success, show a toast: “All people deleted.”
+
+Add a DataManager method to perform this: deleteAllMembers().
+
+Data layer & APIs
+Types (ensure these exist and are used)
+export type Gender = 'Male' | 'Female' | 'Other';
+
+export interface Member {
+  id: string;
+  name: string;
+  birthYear: number;
+  gender: Gender;
+  skillLevel: 1 | 2 | 3 | 4 | 5;
+  isPresent: boolean;
+  groupId?: string | null;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+}
+
+export interface Location {
+  id: string;
+  name: string;
+  groups: Group[];
+  members: Member[];
+}
+
+export interface AppSettings {
+  showSkill: boolean;
+  showGender: boolean;
+  showAge: boolean;
+  maxGroupsPerLocation: number; // default 8, allow up to 50
+  defaultCollapseGroups: boolean;
+  teamClampRule: 'conservative' | 'relaxed'; // n/2 vs n
+  defaultAlgorithm: 'balanced';
+  persistFilters: boolean;
+}
+
+DataManager (extend)
+// Settings
+getSettings(): AppSettings;
+updateSettings(patch: Partial<AppSettings>): void;
+
+// Dangerous action
+deleteAllMembers(): void;
+
+// Existing helpers that should be present/used:
+getLocations(): Location[];
+getGroups(locationId: string): Group[];
+getMembersByGroup(locationId: string, groupId: string | null): Member[];
+assignMemberToGroup(locationId: string, memberId: string, groupId: string | null): void;
+updateMemberPresence(locationId: string, memberId: string, isPresent: boolean): void;
+getPresentMembersByGroups(locationId: string, groupIds: string[]): Member[];
+
+Persistence
+
+Initialize default settings on first run:
+
+const DEFAULT_SETTINGS: AppSettings = {
+  showSkill: true,
+  showGender: true,
+  showAge: true,
+  maxGroupsPerLocation: 8,
+  defaultCollapseGroups: false,
+  teamClampRule: 'conservative',
+  defaultAlgorithm: 'balanced',
+  persistFilters: true,
+};
+
+
+Save to local storage or current storage layer. Migrate older state if needed (groups defaults to []).
+
+Code changes
+
+Header: add a Settings icon (hamburger or cog) at top-right → opens a modal/drawer.
+
+Settings modal: controlled component that reads/writes to DataManager’s settings.
+
+Attendance screen:
+
+If groups exist, render group cards with collapsible member lists.
+
+Show members inside their group; keep UI lean when collapsed.
+
+Add per-group actions: select all/none (presence), search.
+
+Keep “Move to group” per member.
+
+Visibility toggles: wrap gender/skill/age chips with checks against settings:
+
+If showSkill === false, don’t render stars.
+
+If showGender === false, hide gender pill.
+
+If showAge === false, hide age.
+
+Team Generator:
+
+Respect settings.teamClampRule when computing maxTeams.
+
+Continue to accept selected groups context if provided.
+
+Danger zone:
+
+Add “Clear All People” in Settings with the confirmation flow.
+
+Wire DataManager.deleteAllMembers() and refresh UI state.
+
+Acceptance criteria
+
+When a location has groups, the Attendance screen shows group cards; clicking a group expands to reveal just its members. No giant single list.
+
+Settings menu exists (top-right), and:
+
+Toggling “Show Skill/Gender/Age” immediately hides/shows those UI elements.
+
+Changing “Max Groups per Location” enforces the limit on add-group (up to 50).
+
+Changing “Team Clamp Rule” affects maxTeams calculation in the generator.
+
+“Clear All People” requires typing DELETE to confirm, then removes all members and shows a success toast.
+
+App continues to generate teams correctly, using presence and (optionally) selected groups.
+
+Nice-to-have extras (implement if quick)
+
+Export/Import data (JSON) for backup/restore (locations, groups, members, settings).
+
+Duplicate Group action (clones group without members).
+
+Bulk move: in a group card, select multiple members and move to another group in one action.
+
+Undo snackbar after presence toggles or moves (short window to revert).
+
+What to deliver
+
+Updated components (header with settings, settings modal, attendance group-cards, any small changes in Team Generator).
+
+Updated DataManager and types plus settings persistence.
+
+Minimal Tailwind classes to match existing look & feel.
+
+Brief note about data migration (ensure groups: [] exists and default settings are applied).
+
+Important implementation notes
+
+Derive age as new Date().getFullYear() - member.birthYear (no member.age field).
+
+Presence updates must use new local state values (avoid toggling based on stale member object).
+
+Keep performance snappy: avoid re-rendering the entire list when toggling a single member (key lists by member.id and group by group.id).
