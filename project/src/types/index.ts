@@ -1,17 +1,25 @@
+export type Gender = 'Male' | 'Female' | 'Other';
+
 export interface Member {
   id: string;
   name: string;
   birthYear: number;
-  age: number;
-  gender: 'Male' | 'Female' | 'Other';
-  skillLevel: number;
+  gender: Gender;
+  skillLevel: 1 | 2 | 3 | 4 | 5;
   isPresent: boolean;
+  groupId?: string | null; // group within the location
+}
+
+export interface Group {
+  id: string;
+  name: string;
 }
 
 export interface Location {
   id: string;
   name: string;
-  members: Member[];
+  groups: Group[];     // fixed groups for this location
+  members: Member[];   // belong to this location
 }
 
 export interface Team {
@@ -35,9 +43,14 @@ export interface TeamGenerationOptions {
 
 export interface RandomPickerOptions {
   count: number;
-  gender?: 'Male' | 'Female' | 'Other';
+  gender?: Gender;
   ageRange?: { min: number; max: number };
   skillRange?: { min: number; max: number };
+}
+
+// Config interface
+export interface AppConfig {
+  MAX_GROUPS_PER_LOCATION: number; // default 8, can be increased to 50
 }
 
 export type AppScreen = 
