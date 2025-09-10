@@ -8,10 +8,10 @@ interface HomeProps {
 export default function Home({ onNavigate }: HomeProps) {
   const features = [
     {
-      id: 'locations',
-      title: 'Manage Locations',
-      description: 'Add and organize your team locations',
-      icon: Users,
+      id: 'attendance',
+      title: 'Who\'s Here',
+      description: 'Track attendance and manage groups',
+      icon: UserCheck,
       screen: 'locations' as AppScreen
     },
     {
@@ -54,7 +54,7 @@ export default function Home({ onNavigate }: HomeProps) {
               <button
                 key={feature.id}
                 onClick={() => onNavigate(feature.screen)}
-                className="w-full bg-[#f2e205] text-[#0d0d0d] rounded-xl p-6 hover:bg-[#e6d600] active:bg-[#d9c900] transition-colors duration-200 transform hover:scale-[1.02] active:scale-[0.98]"
+                className={`w-full ${feature.id === 'attendance' ? 'bg-[#F27A6B] hover:bg-[#e36a5b] text-[#0d0d0d] focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#F27A6B]' : 'bg-[#f2e205] hover:bg-[#e6d600] active:bg-[#d9c900] text-[#0d0d0d]'} rounded-xl p-6 transition-colors duration-200 transform hover:scale-[1.02] active:scale-[0.98] font-semibold`}
               >
                 <div className="flex items-center space-x-4">
                   <div className="bg-[#0d0d0d] bg-opacity-20 rounded-lg p-3">

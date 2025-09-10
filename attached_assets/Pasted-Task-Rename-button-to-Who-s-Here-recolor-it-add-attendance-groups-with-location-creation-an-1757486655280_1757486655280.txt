@@ -1,0 +1,190 @@
+Task: Rename button to “Who’s Here”, recolor it, add attendance + groups (with location creation) and support up to 50 groups per location
+Summary
+
+Shift the UX to focus on who’s present right now.
+
+Rename “Manage Locations” to “Who’s Here” with color #F27A6B.
+
+Clicking Who’s Here opens an Attendance screen where I can:
+
+Create/select locations (add new locations if needed).
+
+Manage fixed Groups inside a location (create/rename/delete, up to a configurable limit; default 8, allow up to 50).
+
+Assign/move people between groups; toggle presence per person.
+
+Multi-select groups participating in the next activity (and optionally deselect absent groups/members).
+
+Pass the selected groups’ present members into the Team Generator (teams are randomized; groups are fixed).
+
+Concept: Groups are stable within a location; Teams are temporary/random per activity.
+
+UI changes
+1) Button label & color
+
+Replace any “Manage Locations” button label with “Who’s Here”.
+
+Style: base #F27A6B, hover a slightly darker shade (e.g. #e36a5b), readable text color, focus ring.
+
+Keep iconography; UserCheck from lucide-react is a good fit.
+
+2) Attendance flow (new/updated component: AttendanceManager.tsx)
+
+Location selector at top with Add Location capability:
+
+Dropdown for existing locations.
+
+“+ Add Location” button (name input → creates location).
+
+Groups section for the selected location:
+
+List groups (cards/rows) with: name, member count, checkbox to include group in next activity.
+
+Buttons: Add Group, Rename, Delete (delete reassigns or unassigns members).
+
+Enforce max groups via a configurable constant (default 8, can be set up to 50).
+
+Members section (grouped display):
+
+Each member row: name, gender pill, derived age, skill stars.
+
+Presence toggle per member.
+
+Move control (dropdown of groups + “Unassigned”).
+
+Quick add person flow (name, birthYear, gender, skill) with initial group assignment.
+
+Footer toolbar:
+
+Generate Teams → navigates to Team Generator, passing { selectedLocationId, selectedGroupIds }.
+
+Done → back/home.
+
+Types (update ../types)
+export type Gender = 'Male' | 'Female' | 'Other';
+
+export interface Member {
+  id: string;
+  name: string;
+  birthYear: number;
+  gender: Gender;
+  skillLevel: 1 | 2 | 3 | 4 | 5;
+  isPresent: boolean;
+  groupId?: string | null; // group within the location
+}
+
+export interface Group {
+  id: string;
+  name: string;
+}
+
+export interface Location {
+  id: string;
+  name: string;
+  groups: Group[];     // fixed groups for this location
+  members: Member[];   // belong to this location
+}
+
+// Config (can live in a constants file)
+export interface AppConfig {
+  MAX_GROUPS_PER_LOCATION: number; // default 8, can be increased to 50
+}
+
+Data layer (../utils/dataManager) — extend without breaking
+
+Add/extend:
+
+// Locations
+createLocation(name: string): Location;
+renameLocation(locationId: string, name: string): void;
+deleteLocation(locationId: string): void;
+getLocations(): Location[];
+
+// Groups
+createGroup(locationId: string, name: string, config?: { maxGroups?: number }): Group;
+renameGroup(locationId: string, groupId: string, name: string): void;
+deleteGroup(locationId: string, groupId: string, options?: { reassignToGroupId?: string | null }): void;
+
+// Membership
+assignMemberToGroup(locationId: string, memberId: string, groupId: string | null): void;
+moveMember(locationId: string, memberId: string, toGroupId: string | null): void;
+
+// Presence
+updateMemberPresence(locationId: string, memberId: string, isPresent: boolean): void;
+
+// Queries
+getGroups(locationId: string): Group[];
+getMembersByGroup(locationId: string, groupId: string | null): Member[];
+getPresentMembersByGroups(locationId: string, groupIds: string[]): Member[];
+
+
+Implementation notes:
+
+Initialize groups: [] if missing on older data.
+
+createGroup must enforce maxGroups (use config default 8; allow override up to 50).
+
+On deleteGroup, either reassign members to a target group or set groupId = null.
+
+Team Generator integration
+
+Accept navigation data { selectedLocationId, selectedGroupIds }.
+
+If provided, build pool via getPresentMembersByGroups(selectedLocationId, selectedGroupIds).
+
+Otherwise fall back to existing behavior (present members across selected locations).
+
+Styling
+
+Tailwind-friendly classes for the “Who’s Here” button:
+
+bg-[#F27A6B] hover:bg-[#e36a5b] text-[#0d0d0d] font-semibold rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#F27A6B].
+
+Group cards: bg-[#1a1a1a], borders #3a3a3a, consistent with current theme.
+
+Configurability
+
+Add a small config export, e.g. src/config/app.ts:
+
+export const APP_CONFIG = {
+  MAX_GROUPS_PER_LOCATION: 8, // can be increased to 50
+};
+
+
+Use this in createGroup. Allow an optional override parameter for one-off seeds/migrations.
+
+Acceptance criteria
+
+The button now reads “Who’s Here”, colored #F27A6B.
+
+I can add locations from the Attendance screen.
+
+In a location, I can create up to MAX_GROUPS_PER_LOCATION groups (default 8; works when set to 50).
+
+I can select multiple groups to participate in the next activity and toggle presence by member.
+
+I can move a person between groups; the change persists immediately.
+
+“Generate Teams” uses present members from the selected groups.
+
+No TS or runtime errors. Existing team stats UI still works.
+
+What to return
+
+Updated components (AttendanceManager.tsx or refactor of the old “Location Manager” screen), nav wiring, and the renamed button with color.
+
+Updates to types, dataManager, and a config file for MAX_GROUPS_PER_LOCATION.
+
+Team Generator changes to consume { selectedLocationId, selectedGroupIds }.
+
+Minimal CSS/Tailwind updates.
+
+A short migration note: initializing groups: [] for legacy locations.
+
+Notes
+
+Groups are stable; teams are randomized per activity.
+
+Presence updates must use the new local state value (avoid toggling based on stale member fields).
+
+Age must be derived from birthYear consistently (new Date().getFullYear() - birthYear).
