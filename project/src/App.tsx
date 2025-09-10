@@ -12,7 +12,6 @@ function App() {
   const [screenData, setScreenData] = useState<any>(null);
 
   const handleNavigate = (screen: AppScreen, data?: any) => {
-    console.log('Navigating to:', screen, 'with data:', data);
     setCurrentScreen(screen);
     setScreenData(data);
   };
