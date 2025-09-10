@@ -25,10 +25,47 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
   const [showSettings, setShowSettings] = useState(false);
 
   const dataManager = DataManager.getInstance();
+  
+  // Get fresh settings on each render to ensure reactivity
   const settings = dataManager.getSettings();
+  
+  // Helper function to save all filters when persistFilters is enabled
+  const saveFiltersToStorage = (updatedLocations?: string[], updatedOptions?: Partial<TeamGenerationOptions>) => {
+    if (settings.persistFilters) {
+      const filtersToSave = {
+        selectedLocations: updatedLocations || selectedLocations,
+        generationOptions: updatedOptions ? { ...generationOptions, ...updatedOptions } : generationOptions
+      };
+      localStorage.setItem('team-generator-filters', JSON.stringify(filtersToSave));
+    }
+  };
 
   useEffect(() => {
     loadData();
+    
+    // Initialize generation options from settings
+    setGenerationOptions(prev => ({
+      ...prev,
+      type: settings.defaultAlgorithm
+    }));
+    
+    // Load persisted filters if enabled
+    if (settings.persistFilters) {
+      const savedFilters = localStorage.getItem('team-generator-filters');
+      if (savedFilters) {
+        try {
+          const parsed = JSON.parse(savedFilters);
+          if (parsed.selectedLocations) {
+            setSelectedLocations(parsed.selectedLocations);
+          }
+          if (parsed.generationOptions) {
+            setGenerationOptions(prev => ({ ...prev, ...parsed.generationOptions }));
+          }
+        } catch (error) {
+          console.error('Failed to load persisted filters:', error);
+        }
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -72,11 +109,14 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
 
   const toggleLocationSelection = (locationId: string) => {
     setSelectedLocations(prev => {
-      if (prev.includes(locationId)) {
-        return prev.length > 1 ? prev.filter(id => id !== locationId) : prev;
-      } else {
-        return [...prev, locationId];
-      }
+      const newSelection = prev.includes(locationId)
+        ? prev.length > 1 ? prev.filter(id => id !== locationId) : prev
+        : [...prev, locationId];
+      
+      // Persist filters with updated locations
+      saveFiltersToStorage(newSelection);
+      
+      return newSelection;
     });
   };
 
@@ -164,10 +204,14 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
               <label className="block text-sm font-medium mb-2">Team Type</label>
               <select
                 value={generationOptions.type}
-                onChange={(e) => setGenerationOptions(prev => ({ 
-                  ...prev, 
-                  type: e.target.value as TeamGenerationOptions['type']
-                }))}
+                onChange={(e) => {
+                  const newOptions = { 
+                    ...generationOptions, 
+                    type: e.target.value as TeamGenerationOptions['type']
+                  };
+                  setGenerationOptions(newOptions);
+                  saveFiltersToStorage(undefined, newOptions);
+                }}
                 className="w-full bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-4 py-3 focus:outline-none focus:border-[#f2e205]"
               >
                 <option value="balanced">Balanced Teams</option>
@@ -186,17 +230,21 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
               <input
                 type="range"
                 min="2"
-                max={Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1)) || 2)}
+                max={Math.max(2, Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}
                 value={generationOptions.numberOfTeams}
-                onChange={(e) => setGenerationOptions(prev => ({ 
-                  ...prev, 
-                  numberOfTeams: parseInt(e.target.value)
-                }))}
+                onChange={(e) => {
+                  const newOptions = { 
+                    ...generationOptions, 
+                    numberOfTeams: parseInt(e.target.value)
+                  };
+                  setGenerationOptions(newOptions);
+                  saveFiltersToStorage(undefined, newOptions);
+                }}
                 className="w-full h-2 bg-[#2a2a2a] rounded-lg appearance-none cursor-pointer slider"
               />
               <div className="flex justify-between text-xs opacity-60 mt-1">
                 <span>2</span>
-                <span>{Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1)) || 2)}</span>
+                <span>{Math.max(2, Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}</span>
               </div>
             </div>
 
@@ -209,27 +257,35 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                     type="number"
                     placeholder="Min age"
                     value={generationOptions.ageRange?.min || ''}
-                    onChange={(e) => setGenerationOptions(prev => ({ 
-                      ...prev, 
-                      ageRange: { 
-                        ...prev.ageRange,
-                        min: parseInt(e.target.value) || 0,
-                        max: prev.ageRange?.max || 100
-                      }
-                    }))}
+                    onChange={(e) => {
+                      const newOptions = { 
+                        ...generationOptions, 
+                        ageRange: { 
+                          ...generationOptions.ageRange,
+                          min: parseInt(e.target.value) || 0,
+                          max: generationOptions.ageRange?.max || 100
+                        }
+                      };
+                      setGenerationOptions(newOptions);
+                      saveFiltersToStorage(undefined, newOptions);
+                    }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   />
                   <input
                     type="number"
                     placeholder="Max age"
                     value={generationOptions.ageRange?.max || ''}
-                    onChange={(e) => setGenerationOptions(prev => ({ 
-                      ...prev, 
-                      ageRange: { 
-                        min: prev.ageRange?.min || 0,
-                        max: parseInt(e.target.value) || 100
-                      }
-                    }))}
+                    onChange={(e) => {
+                      const newOptions = { 
+                        ...generationOptions, 
+                        ageRange: { 
+                          min: generationOptions.ageRange?.min || 0,
+                          max: parseInt(e.target.value) || 100
+                        }
+                      };
+                      setGenerationOptions(newOptions);
+                      saveFiltersToStorage(undefined, newOptions);
+                    }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   />
                 </div>
@@ -243,14 +299,18 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                 <div className="flex space-x-2">
                   <select
                     value={generationOptions.skillRange?.min || 1}
-                    onChange={(e) => setGenerationOptions(prev => ({ 
-                      ...prev, 
-                      skillRange: { 
-                        ...prev.skillRange,
-                        min: parseInt(e.target.value),
-                        max: prev.skillRange?.max || 5
-                      }
-                    }))}
+                    onChange={(e) => {
+                      const newOptions = { 
+                        ...generationOptions, 
+                        skillRange: { 
+                          ...generationOptions.skillRange,
+                          min: parseInt(e.target.value),
+                          max: generationOptions.skillRange?.max || 5
+                        }
+                      };
+                      setGenerationOptions(newOptions);
+                      saveFiltersToStorage(undefined, newOptions);
+                    }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   >
                     {[1, 2, 3, 4, 5].map(n => (
@@ -259,13 +319,17 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                   </select>
                   <select
                     value={generationOptions.skillRange?.max || 5}
-                    onChange={(e) => setGenerationOptions(prev => ({ 
-                      ...prev, 
-                      skillRange: { 
-                        min: prev.skillRange?.min || 1,
-                        max: parseInt(e.target.value)
-                      }
-                    }))}
+                    onChange={(e) => {
+                      const newOptions = { 
+                        ...generationOptions, 
+                        skillRange: { 
+                          min: generationOptions.skillRange?.min || 1,
+                          max: parseInt(e.target.value)
+                        }
+                      };
+                      setGenerationOptions(newOptions);
+                      saveFiltersToStorage(undefined, newOptions);
+                    }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   >
                     {[1, 2, 3, 4, 5].map(n => (
@@ -350,19 +414,25 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                 </div>
                 
                 {/* Team Stats */}
-                <div className="grid grid-cols-2 gap-4 mb-4 p-3 bg-[#2a2a2a] rounded-lg">
-                  <div className="text-center">
-                    <div className="text-sm opacity-60">Avg Skill</div>
-                    <div className="font-semibold text-[#f2e205]">{team.avgSkill}</div>
+                {(settings.showSkill || settings.showGender) && (
+                  <div className="grid gap-4 mb-4 p-3 bg-[#2a2a2a] rounded-lg" style={{gridTemplateColumns: `repeat(${(settings.showSkill ? 1 : 0) + (settings.showGender ? 1 : 0)}, minmax(0, 1fr))`}}>
+                    {settings.showSkill && (
+                      <div className="text-center">
+                        <div className="text-sm opacity-60">Avg Skill</div>
+                        <div className="font-semibold text-[#f2e205]">{team.avgSkill}</div>
+                      </div>
+                    )}
+                    {settings.showGender && (
+                      <div className="text-center">
+                        <div className="text-sm opacity-60">Gender Mix</div>
+                        <div className="text-xs">
+                          M:{team.genderRatio.male}% F:{team.genderRatio.female}%
+                          {team.genderRatio.other > 0 && ` O:${team.genderRatio.other}%`}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="text-center">
-                    <div className="text-sm opacity-60">Gender Mix</div>
-                    <div className="text-xs">
-                      M:{team.genderRatio.male}% F:{team.genderRatio.female}%
-                      {team.genderRatio.other > 0 && ` O:${team.genderRatio.other}%`}
-                    </div>
-                  </div>
-                </div>
+                )}
 
                 {/* Team Members */}
                 <div className="space-y-2">

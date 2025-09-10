@@ -40,6 +40,7 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   const [error, setError] = useState('');
 
   const dataManager = DataManager.getInstance();
+  const settings = dataManager.getSettings();
 
   useEffect(() => {
     loadLocations();

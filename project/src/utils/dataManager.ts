@@ -1,5 +1,4 @@
 import { Location, Member, Group, AppSettings } from '../types';
-import { APP_CONFIG } from '../config/app';
 import { DEFAULT_SETTINGS } from '../config/settings';
 
 const STORAGE_KEY = 'team-management-data';
@@ -141,7 +140,7 @@ export class DataManager {
     const location = this.locations.find(loc => loc.id === locationId);
     if (!location) throw new Error('Location not found');
 
-    const maxGroups = config?.maxGroups || APP_CONFIG.MAX_GROUPS_PER_LOCATION;
+    const maxGroups = config?.maxGroups || this.settings.maxGroupsPerLocation;
     if (location.groups.length >= maxGroups) {
       throw new Error(`Maximum ${maxGroups} groups allowed per location`);
     }
