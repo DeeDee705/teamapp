@@ -1,4 +1,5 @@
-import { Location, Member } from '../types';
+import { Location, Member, Group } from '../types';
+import { APP_CONFIG } from '../config/app';
 
 const STORAGE_KEY = 'team-management-data';
 
@@ -26,6 +27,17 @@ export class DataManager {
     if (data) {
       try {
         this.locations = JSON.parse(data);
+        // Migration: initialize groups array for legacy locations
+        this.locations.forEach(location => {
+          if (!location.groups) {
+            location.groups = [];
+          }
+          // Migration: remove age field if it exists (will be derived)
+          location.members.forEach(member => {
+            delete (member as any).age;
+          });
+        });
+        this.saveData(); // Save migrated data
       } catch (error) {
         console.error('Failed to load data:', error);
         this.locations = [];
@@ -38,15 +50,28 @@ export class DataManager {
     return this.locations;
   }
 
-  public addLocation(name: string): Location {
+  public createLocation(name: string): Location {
     const location: Location = {
       id: Date.now().toString(),
       name,
+      groups: [],
       members: []
     };
     this.locations.push(location);
     this.saveData();
     return location;
+  }
+
+  public addLocation(name: string): Location {
+    return this.createLocation(name);
+  }
+
+  public renameLocation(locationId: string, name: string): void {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (location) {
+      location.name = name;
+      this.saveData();
+    }
   }
 
   public deleteLocation(locationId: string): void {
@@ -109,5 +134,85 @@ export class DataManager {
 
   public updateMemberPresence(locationId: string, memberId: string, isPresent: boolean): void {
     this.updateMember(locationId, memberId, { isPresent });
+  }
+
+  // Group methods
+  public createGroup(locationId: string, name: string, config?: { maxGroups?: number }): Group {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (!location) throw new Error('Location not found');
+
+    const maxGroups = config?.maxGroups || APP_CONFIG.MAX_GROUPS_PER_LOCATION;
+    if (location.groups.length >= maxGroups) {
+      throw new Error(`Maximum ${maxGroups} groups allowed per location`);
+    }
+
+    const group: Group = {
+      id: Date.now().toString(),
+      name
+    };
+
+    location.groups.push(group);
+    this.saveData();
+    return group;
+  }
+
+  public renameGroup(locationId: string, groupId: string, name: string): void {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (!location) return;
+
+    const group = location.groups.find(g => g.id === groupId);
+    if (group) {
+      group.name = name;
+      this.saveData();
+    }
+  }
+
+  public deleteGroup(locationId: string, groupId: string, options?: { reassignToGroupId?: string | null }): void {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (!location) return;
+
+    // Remove the group
+    location.groups = location.groups.filter(g => g.id !== groupId);
+
+    // Handle member reassignment
+    location.members.forEach(member => {
+      if (member.groupId === groupId) {
+        member.groupId = options?.reassignToGroupId || null;
+      }
+    });
+
+    this.saveData();
+  }
+
+  public getGroups(locationId: string): Group[] {
+    const location = this.locations.find(loc => loc.id === locationId);
+    return location?.groups || [];
+  }
+
+  public getMembersByGroup(locationId: string, groupId: string | null): Member[] {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (!location) return [];
+
+    return location.members.filter(member => member.groupId === groupId);
+  }
+
+  public getPresentMembersByGroups(locationId: string, groupIds: string[]): Member[] {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (!location) return [];
+
+    return location.members.filter(member => 
+      member.isPresent && 
+      member.groupId && 
+      groupIds.includes(member.groupId)
+    );
+  }
+
+  // Membership methods
+  public assignMemberToGroup(locationId: string, memberId: string, groupId: string | null): void {
+    this.updateMember(locationId, memberId, { groupId });
+  }
+
+  public moveMember(locationId: string, memberId: string, toGroupId: string | null): void {
+    this.assignMemberToGroup(locationId, memberId, toGroupId);
   }
 }
