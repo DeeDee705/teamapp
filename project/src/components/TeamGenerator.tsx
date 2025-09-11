@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Users, Settings, Shuffle, CheckCircle, User, Star } from 'lucide-react';
-import { AppScreen, Location, Member, Team, TeamGenerationOptions } from '../types';
+import { ArrowLeft, Users, Settings, Shuffle, User, Star, Filter, X, RotateCcw, Plus, Minus } from 'lucide-react';
+import { AppScreen, Member, Team, Gender, CustomAttribute, CustomRule, TeamGenerationOptions } from '../types';
 import { DataManager } from '../utils/dataManager';
 import { TeamBalancer } from '../utils/teamBalancer';
+import { applyFilters } from '../utils/filters';
 
 interface TeamGeneratorProps {
   onNavigate: (screen: AppScreen, data?: any) => void;
@@ -13,41 +14,59 @@ interface TeamGeneratorProps {
 }
 
 export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorProps) {
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
-  const [presentMembers, setPresentMembers] = useState<Member[]>([]);
+  // Pool and teams
+  const [attendancePool, setAttendancePool] = useState<Member[]>([]);
+  const [filteredMembers, setFilteredMembers] = useState<Member[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [numberOfTeams, setNumberOfTeams] = useState(2);
+  const [isGenerating, setIsGenerating] = useState(false);
+  
+  // Filter states
+  const [genderFilter, setGenderFilter] = useState<Record<Gender, boolean>>({
+    Male: true, Female: true, Other: true
+  });
+  const [ageRange, setAgeRange] = useState<{ min?: number; max?: number }>({});
+  const [skillRange, setSkillRange] = useState<{ min?: number; max?: number }>({});
+  const [customAttributes, setCustomAttributes] = useState<CustomAttribute[]>([]);
+  const [customRules, setCustomRules] = useState<CustomRule[]>([]);
+  
+  // UI states
+  const [showFilters, setShowFilters] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Team generation options
   const [generationOptions, setGenerationOptions] = useState<TeamGenerationOptions>({
     type: 'balanced',
     numberOfTeams: 2
   });
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
 
   const dataManager = DataManager.getInstance();
-  
-  // Get fresh settings on each render to ensure reactivity
   const settings = dataManager.getSettings();
   
-  // Helper function to save all filters when persistFilters is enabled
-  const saveFiltersToStorage = (updatedLocations?: string[], updatedOptions?: Partial<TeamGenerationOptions>) => {
+  // Helper function to save filters when persistFilters is enabled
+  const saveFiltersToStorage = () => {
     if (settings.persistFilters) {
       const filtersToSave = {
-        selectedLocations: updatedLocations || selectedLocations,
-        generationOptions: updatedOptions ? { ...generationOptions, ...updatedOptions } : generationOptions
+        genderFilter,
+        ageRange,
+        skillRange,
+        customRules,
+        numberOfTeams
       };
       localStorage.setItem('team-generator-filters', JSON.stringify(filtersToSave));
     }
   };
 
   useEffect(() => {
-    loadData();
+    // Load custom attributes
+    setCustomAttributes(dataManager.getCustomAttributes());
     
-    // Initialize generation options from settings
-    setGenerationOptions(prev => ({
-      ...prev,
-      type: settings.defaultAlgorithm
-    }));
+    // Build attendance pool from navigation context (from "Who's Here")
+    const pool: Member[] = screenData?.selectedLocationId && screenData?.selectedGroupIds?.length
+      ? dataManager.getPresentMembersByGroups(screenData.selectedLocationId, screenData.selectedGroupIds)
+      : [];
+    
+    setAttendancePool(pool);
     
     // Load persisted filters if enabled
     if (settings.persistFilters) {
@@ -55,80 +74,69 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
       if (savedFilters) {
         try {
           const parsed = JSON.parse(savedFilters);
-          if (parsed.selectedLocations) {
-            setSelectedLocations(parsed.selectedLocations);
-          }
-          if (parsed.generationOptions) {
-            setGenerationOptions(prev => ({ ...prev, ...parsed.generationOptions }));
-          }
+          if (parsed.genderFilter) setGenderFilter(parsed.genderFilter);
+          if (parsed.ageRange) setAgeRange(parsed.ageRange);
+          if (parsed.skillRange) setSkillRange(parsed.skillRange);
+          if (parsed.customRules) setCustomRules(parsed.customRules);
+          if (parsed.numberOfTeams) setNumberOfTeams(parsed.numberOfTeams);
         } catch (error) {
           console.error('Failed to load persisted filters:', error);
         }
       }
     }
-  }, []);
+  }, [screenData]);
 
+  // Apply filters whenever filters or pool changes
   useEffect(() => {
-    updatePresentMembers();
-  }, [selectedLocations]);
-
-  const loadData = () => {
-    const allLocations = dataManager.getLocations();
-    setLocations(allLocations);
+    const filtered = applyFilters(attendancePool, { genderFilter, ageRange, skillRange, customRules });
+    setFilteredMembers(filtered);
     
-    // If we have navigation data from AttendanceManager, use it
-    if (screenData?.selectedLocationId) {
-      setSelectedLocations([screenData.selectedLocationId]);
-    } else if (allLocations.length > 0) {
-      setSelectedLocations([allLocations[0].id]);
-    }
-  };
-
-  const updatePresentMembers = () => {
-    let members: Member[];
-    
-    // If we have group-based selection from AttendanceManager, use it
-    if (screenData?.selectedLocationId && screenData?.selectedGroupIds?.length) {
-      members = dataManager.getPresentMembersByGroups(
-        screenData.selectedLocationId, 
-        screenData.selectedGroupIds
-      );
-    } else {
-      members = dataManager.getPresentMembers(selectedLocations);
-    }
-    
-    setPresentMembers(members);
-    
-    // Adjust number of teams based on available members and settings
+    // Auto-adjust number of teams based on available members
     const divisor = settings.teamClampRule === 'conservative' ? 2 : 1;
-    const maxTeams = Math.max(2, Math.min(8, Math.floor(members.length / divisor)));
-    if (generationOptions.numberOfTeams > maxTeams) {
-      setGenerationOptions(prev => ({ ...prev, numberOfTeams: maxTeams }));
+    const maxTeams = Math.max(2, Math.min(8, Math.floor(filtered.length / divisor)));
+    if (numberOfTeams > maxTeams) {
+      setNumberOfTeams(maxTeams);
     }
+  }, [attendancePool, genderFilter, ageRange, skillRange, customRules, numberOfTeams, settings.teamClampRule]);
+
+  // Filter manipulation functions
+  const resetFilters = () => {
+    setGenderFilter({ Male: true, Female: true, Other: true });
+    setAgeRange({});
+    setSkillRange({});
+    setCustomRules([]);
+    saveFiltersToStorage();
   };
 
-  const toggleLocationSelection = (locationId: string) => {
-    setSelectedLocations(prev => {
-      const newSelection = prev.includes(locationId)
-        ? prev.length > 1 ? prev.filter(id => id !== locationId) : prev
-        : [...prev, locationId];
-      
-      // Persist filters with updated locations
-      saveFiltersToStorage(newSelection);
-      
-      return newSelection;
-    });
+  const addCustomRule = () => {
+    if (customAttributes.length === 0) return;
+    const newRule: CustomRule = {
+      key: customAttributes[0].key,
+      op: 'equals',
+      value: ''
+    };
+    setCustomRules(prev => [...prev, newRule]);
+  };
+
+  const updateCustomRule = (index: number, updates: Partial<CustomRule>) => {
+    setCustomRules(prev => prev.map((rule, i) => 
+      i === index ? { ...rule, ...updates } : rule
+    ));
+  };
+
+  const removeCustomRule = (index: number) => {
+    setCustomRules(prev => prev.filter((_, i) => i !== index));
   };
 
   const generateTeams = async () => {
-    if (presentMembers.length < 2) return;
+    if (filteredMembers.length < 2) return;
     
     setIsGenerating(true);
     
     // Add a small delay for better UX
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    const newTeams = TeamBalancer.generateTeams(presentMembers, generationOptions);
+    const newTeams = TeamBalancer.generateTeams(filteredMembers, generationOptions);
     setTeams(newTeams);
     setIsGenerating(false);
   };
@@ -165,34 +173,179 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
       </div>
 
       <div className="p-4 space-y-6">
-        {/* Location Selection */}
+        {/* Filter Toggle */}
         <div className="bg-[#1a1a1a] rounded-xl p-4">
-          <h3 className="text-lg font-semibold mb-3 flex items-center space-x-2">
-            <CheckCircle size={20} className="text-[#f2e205]" />
-            <span>Select Locations</span>
-          </h3>
-          <div className="space-y-2">
-            {locations.map(location => (
-              <label
-                key={location.id}
-                className="flex items-center space-x-3 p-3 rounded-lg hover:bg-[#2a2a2a] cursor-pointer"
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold flex items-center space-x-2">
+              <Filter size={20} className="text-[#f2e205]" />
+              <span>Filters ({filteredMembers.length} of {attendancePool.length} members)</span>
+            </h3>
+            <div className="flex space-x-2">
+              <button
+                onClick={resetFilters}
+                className="p-2 hover:bg-[#2a2a2a] rounded-lg transition-colors"
+                title="Reset Filters"
               >
-                <input
-                  type="checkbox"
-                  checked={selectedLocations.includes(location.id)}
-                  onChange={() => toggleLocationSelection(location.id)}
-                  className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 rounded focus:ring-[#f2e205]"
-                />
-                <div className="flex-1">
-                  <span className="font-medium">{location.name}</span>
-                  <span className="text-sm opacity-60 ml-2">
-                    ({location.members.filter(m => m.isPresent).length} present)
-                  </span>
-                </div>
-              </label>
-            ))}
+                <RotateCcw size={16} />
+              </button>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className="p-2 hover:bg-[#2a2a2a] rounded-lg transition-colors"
+              >
+                {showFilters ? <Minus size={16} /> : <Plus size={16} />}
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Filter Sections */}
+        {showFilters && (
+          <div className="bg-[#1a1a1a] rounded-xl p-4 space-y-4">
+            {/* Gender Filter */}
+            <div>
+              <label className="block text-sm font-medium mb-2">Gender</label>
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(genderFilter) as Gender[]).map(gender => (
+                  <label key={gender} className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={genderFilter[gender]}
+                      onChange={(e) => {
+                        setGenderFilter(prev => ({ ...prev, [gender]: e.target.checked }));
+                        saveFiltersToStorage();
+                      }}
+                      className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 rounded focus:ring-[#f2e205]"
+                    />
+                    <span className="text-sm">{gender}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Age Range Filter */}
+            <div>
+              <label className="block text-sm font-medium mb-2">Age Range</label>
+              <div className="flex space-x-2">
+                <input
+                  type="number"
+                  placeholder="Min age"
+                  value={ageRange.min || ''}
+                  onChange={(e) => {
+                    setAgeRange(prev => ({ ...prev, min: parseInt(e.target.value) || undefined }));
+                    saveFiltersToStorage();
+                  }}
+                  className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                />
+                <input
+                  type="number"
+                  placeholder="Max age"
+                  value={ageRange.max || ''}
+                  onChange={(e) => {
+                    setAgeRange(prev => ({ ...prev, max: parseInt(e.target.value) || undefined }));
+                    saveFiltersToStorage();
+                  }}
+                  className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                />
+              </div>
+            </div>
+
+            {/* Skill Range Filter */}
+            <div>
+              <label className="block text-sm font-medium mb-2">Skill Level Range</label>
+              <div className="flex space-x-2">
+                <select
+                  value={skillRange.min || ''}
+                  onChange={(e) => {
+                    setSkillRange(prev => ({ ...prev, min: parseInt(e.target.value) || undefined }));
+                    saveFiltersToStorage();
+                  }}
+                  className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                >
+                  <option value="">Min Skill</option>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <select
+                  value={skillRange.max || ''}
+                  onChange={(e) => {
+                    setSkillRange(prev => ({ ...prev, max: parseInt(e.target.value) || undefined }));
+                    saveFiltersToStorage();
+                  }}
+                  className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                >
+                  <option value="">Max Skill</option>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Custom Rules */}
+            {customAttributes.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium">Custom Rules</label>
+                  <button
+                    onClick={addCustomRule}
+                    className="p-1 hover:bg-[#2a2a2a] rounded transition-colors"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+                {customRules.map((rule, index) => (
+                  <div key={index} className="flex space-x-2 mb-2">
+                    <select
+                      value={rule.key}
+                      onChange={(e) => {
+                        updateCustomRule(index, { key: e.target.value });
+                        saveFiltersToStorage();
+                      }}
+                      className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                    >
+                      {customAttributes.map(attr => (
+                        <option key={attr.key} value={attr.key}>{attr.label}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={rule.op}
+                      onChange={(e) => {
+                        updateCustomRule(index, { op: e.target.value as CustomRule['op'] });
+                        saveFiltersToStorage();
+                      }}
+                      className="bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                    >
+                      <option value="equals">Equals</option>
+                      <option value="contains">Contains</option>
+                      <option value="gte">≥</option>
+                      <option value="lte">≤</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={rule.value}
+                      onChange={(e) => {
+                        updateCustomRule(index, { value: e.target.value });
+                        saveFiltersToStorage();
+                      }}
+                      className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
+                      placeholder="Value"
+                    />
+                    <button
+                      onClick={() => {
+                        removeCustomRule(index);
+                        saveFiltersToStorage();
+                      }}
+                      className="p-2 hover:bg-[#2a2a2a] rounded transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Settings Panel */}
         {showSettings && (
@@ -210,7 +363,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                     type: e.target.value as TeamGenerationOptions['type']
                   };
                   setGenerationOptions(newOptions);
-                  saveFiltersToStorage(undefined, newOptions);
+                  saveFiltersToStorage();
                 }}
                 className="w-full bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-4 py-3 focus:outline-none focus:border-[#f2e205]"
               >
@@ -230,7 +383,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
               <input
                 type="range"
                 min="2"
-                max={Math.max(2, Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}
+                max={Math.max(2, Math.min(8, Math.floor(filteredMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}
                 value={generationOptions.numberOfTeams}
                 onChange={(e) => {
                   const newOptions = { 
@@ -238,13 +391,13 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                     numberOfTeams: parseInt(e.target.value)
                   };
                   setGenerationOptions(newOptions);
-                  saveFiltersToStorage(undefined, newOptions);
+                  saveFiltersToStorage();
                 }}
                 className="w-full h-2 bg-[#2a2a2a] rounded-lg appearance-none cursor-pointer slider"
               />
               <div className="flex justify-between text-xs opacity-60 mt-1">
                 <span>2</span>
-                <span>{Math.max(2, Math.min(8, Math.floor(presentMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}</span>
+                <span>{Math.max(2, Math.min(8, Math.floor(filteredMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}</span>
               </div>
             </div>
 
@@ -267,7 +420,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage(undefined, newOptions);
+                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   />
@@ -284,7 +437,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage(undefined, newOptions);
+                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   />
@@ -309,7 +462,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage(undefined, newOptions);
+                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   >
@@ -328,7 +481,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage(undefined, newOptions);
+                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   >
@@ -346,15 +499,15 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
         <div className="bg-[#1a1a1a] rounded-xl p-4">
           <h3 className="text-lg font-semibold mb-3 flex items-center space-x-2">
             <User size={20} className="text-[#f2e205]" />
-            <span>Present Members ({presentMembers.length})</span>
+            <span>Present Members ({filteredMembers.length})</span>
           </h3>
-          {presentMembers.length === 0 ? (
+          {filteredMembers.length === 0 ? (
             <p className="text-center opacity-60 py-4">
               No members selected or marked as present
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
-              {presentMembers.slice(0, 8).map(member => (
+              {filteredMembers.slice(0, 8).map(member => (
                 <div key={member.id} className="bg-[#2a2a2a] rounded-lg p-2">
                   <div className="font-medium text-sm">{member.name}</div>
                   <div className="flex items-center justify-between text-xs opacity-60">
@@ -367,10 +520,10 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
                   </div>
                 </div>
               ))}
-              {presentMembers.length > 8 && (
+              {filteredMembers.length > 8 && (
                 <div className="bg-[#2a2a2a] rounded-lg p-2 flex items-center justify-center">
                   <span className="text-sm opacity-60">
-                    +{presentMembers.length - 8} more
+                    +{filteredMembers.length - 8} more
                   </span>
                 </div>
               )}
@@ -381,7 +534,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
         {/* Generate Button */}
         <button
           onClick={generateTeams}
-          disabled={presentMembers.length < 2 || isGenerating}
+          disabled={filteredMembers.length < 2 || isGenerating}
           className="w-full bg-[#f2e205] text-[#0d0d0d] py-4 rounded-xl font-semibold hover:bg-[#e6d600] disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
         >
           {isGenerating ? (
