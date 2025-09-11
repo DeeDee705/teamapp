@@ -1,17 +1,20 @@
-import { Location, Member, Group, AppSettings } from '../types';
+import { Location, Member, Group, AppSettings, CustomAttribute } from '../types';
 import { DEFAULT_SETTINGS } from '../config/settings';
 
 const STORAGE_KEY = 'team-management-data';
 const SETTINGS_KEY = 'team-management-settings';
+const CUSTOM_ATTRIBUTES_KEY = 'team-management-custom-attributes';
 
 export class DataManager {
   private static instance: DataManager;
   private locations: Location[] = [];
   private settings: AppSettings = DEFAULT_SETTINGS;
+  private customAttributes: CustomAttribute[] = [];
 
   private constructor() {
     this.loadData();
     this.loadSettings();
+    this.loadCustomAttributes();
   }
 
   public static getInstance(): DataManager {
@@ -242,6 +245,60 @@ export class DataManager {
 
   private saveSettings(): void {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
+  }
+
+  // Custom attributes methods
+  public getCustomAttributes(): CustomAttribute[] {
+    return [...this.customAttributes];
+  }
+
+  public addCustomAttribute(attr: CustomAttribute): void {
+    this.customAttributes.push(attr);
+    this.saveCustomAttributes();
+  }
+
+  public removeCustomAttribute(key: string): void {
+    this.customAttributes = this.customAttributes.filter(attr => attr.key !== key);
+    // Remove this attribute from all members
+    this.locations.forEach(location => {
+      location.members.forEach(member => {
+        if (member.attrs && member.attrs[key] !== undefined) {
+          delete member.attrs[key];
+        }
+      });
+    });
+    this.saveCustomAttributes();
+    this.saveData();
+  }
+
+  public updateMemberAttr(locationId: string, memberId: string, key: string, value: any): void {
+    const location = this.locations.find(loc => loc.id === locationId);
+    if (!location) return;
+
+    const member = location.members.find(m => m.id === memberId);
+    if (member) {
+      if (!member.attrs) {
+        member.attrs = {};
+      }
+      member.attrs[key] = value;
+      this.saveData();
+    }
+  }
+
+  private loadCustomAttributes(): void {
+    const data = localStorage.getItem(CUSTOM_ATTRIBUTES_KEY);
+    if (data) {
+      try {
+        this.customAttributes = JSON.parse(data);
+      } catch (error) {
+        console.error('Failed to load custom attributes:', error);
+        this.customAttributes = [];
+      }
+    }
+  }
+
+  private saveCustomAttributes(): void {
+    localStorage.setItem(CUSTOM_ATTRIBUTES_KEY, JSON.stringify(this.customAttributes));
   }
 
   // Dangerous action

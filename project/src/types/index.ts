@@ -8,6 +8,8 @@ export interface Member {
   skillLevel: 1 | 2 | 3 | 4 | 5;
   isPresent: boolean;
   groupId?: string | null; // group within the location
+  // NEW: user-defined attributes
+  attrs?: Record<string, string | number | boolean | string[]>;
 }
 
 export interface Group {
@@ -63,6 +65,19 @@ export interface AppSettings {
   teamClampRule: 'conservative' | 'relaxed'; // n/2 vs n
   defaultAlgorithm: 'balanced';
   persistFilters: boolean;
+}
+
+export interface CustomAttribute {
+  key: string;
+  label: string;
+  type: 'text' | 'number' | 'enum' | 'boolean';
+  options?: string[]; // for enum
+}
+
+export interface CustomRule {
+  key: string; // attr key
+  op: 'equals' | 'contains' | 'gte' | 'lte' | 'in' | 'is';
+  value: any;
 }
 
 export type AppScreen = 
