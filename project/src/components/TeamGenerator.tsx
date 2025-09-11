@@ -18,7 +18,6 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
   const [attendancePool, setAttendancePool] = useState<Member[]>([]);
   const [filteredMembers, setFilteredMembers] = useState<Member[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [numberOfTeams, setNumberOfTeams] = useState(2);
   const [isGenerating, setIsGenerating] = useState(false);
   
   // Filter states
@@ -51,7 +50,7 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
         ageRange,
         skillRange,
         customRules,
-        numberOfTeams
+        numberOfTeams: generationOptions.numberOfTeams
       };
       localStorage.setItem('team-generator-filters', JSON.stringify(filtersToSave));
     }
@@ -78,7 +77,9 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
           if (parsed.ageRange) setAgeRange(parsed.ageRange);
           if (parsed.skillRange) setSkillRange(parsed.skillRange);
           if (parsed.customRules) setCustomRules(parsed.customRules);
-          if (parsed.numberOfTeams) setNumberOfTeams(parsed.numberOfTeams);
+          if (parsed.numberOfTeams) {
+            setGenerationOptions(prev => ({ ...prev, numberOfTeams: parsed.numberOfTeams }));
+          }
         } catch (error) {
           console.error('Failed to load persisted filters:', error);
         }
@@ -94,10 +95,10 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
     // Auto-adjust number of teams based on available members
     const divisor = settings.teamClampRule === 'conservative' ? 2 : 1;
     const maxTeams = Math.max(2, Math.min(8, Math.floor(filtered.length / divisor)));
-    if (numberOfTeams > maxTeams) {
-      setNumberOfTeams(maxTeams);
+    if (generationOptions.numberOfTeams > maxTeams) {
+      setGenerationOptions(prev => ({ ...prev, numberOfTeams: maxTeams }));
     }
-  }, [attendancePool, genderFilter, ageRange, skillRange, customRules, numberOfTeams, settings.teamClampRule]);
+  }, [attendancePool, genderFilter, ageRange, skillRange, customRules, generationOptions.numberOfTeams, settings.teamClampRule]);
 
   // Filter manipulation functions
   const resetFilters = () => {
@@ -126,6 +127,42 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
 
   const removeCustomRule = (index: number) => {
     setCustomRules(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Helper functions for filter chips
+  const getActiveGenderFilters = () => {
+    const active = Object.entries(genderFilter).filter(([_, isActive]) => isActive).map(([gender, _]) => gender);
+    const all = Object.keys(genderFilter);
+    return { active, isPartial: active.length < all.length && active.length > 0 };
+  };
+
+  const hasActiveAgeFilter = () => ageRange.min !== undefined || ageRange.max !== undefined;
+  const hasActiveSkillFilter = () => skillRange.min !== undefined || skillRange.max !== undefined;
+
+  const removeGenderFilter = () => {
+    setGenderFilter({ Male: true, Female: true, Other: true });
+    saveFiltersToStorage();
+  };
+
+  const removeAgeFilter = () => {
+    setAgeRange({});
+    saveFiltersToStorage();
+  };
+
+  const removeSkillFilter = () => {
+    setSkillRange({});
+    saveFiltersToStorage();
+  };
+
+  const removeAllCustomRules = () => {
+    setCustomRules([]);
+    saveFiltersToStorage();
+  };
+
+  // Check if any filters are active
+  const hasActiveFilters = () => {
+    const { isPartial } = getActiveGenderFilters();
+    return isPartial || hasActiveAgeFilter() || hasActiveSkillFilter() || customRules.length > 0;
   };
 
   const generateTeams = async () => {
@@ -530,6 +567,89 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
             </div>
           )}
         </div>
+
+        {/* Active Filter Summary Chips */}
+        {hasActiveFilters() && (
+          <div className="bg-[#1a1a1a] rounded-xl p-4">
+            <h3 className="text-sm font-medium mb-3 flex items-center space-x-2">
+              <Filter size={16} className="text-[#f2e205]" />
+              <span>Active Filters</span>
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {/* Gender Filter Chip */}
+              {(() => {
+                const { active, isPartial } = getActiveGenderFilters();
+                return isPartial && (
+                  <div className="flex items-center space-x-2 bg-[#2a2a2a] px-3 py-1.5 rounded-lg">
+                    <span className="text-sm">
+                      Gender: {active.join(', ')} only
+                    </span>
+                    <button
+                      onClick={removeGenderFilter}
+                      className="p-0.5 hover:bg-[#3a3a3a] rounded transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* Age Range Filter Chip */}
+              {hasActiveAgeFilter() && (
+                <div className="flex items-center space-x-2 bg-[#2a2a2a] px-3 py-1.5 rounded-lg">
+                  <span className="text-sm">
+                    Age: {ageRange.min || '?'}-{ageRange.max || '?'}
+                  </span>
+                  <button
+                    onClick={removeAgeFilter}
+                    className="p-0.5 hover:bg-[#3a3a3a] rounded transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Skill Range Filter Chip */}
+              {hasActiveSkillFilter() && (
+                <div className="flex items-center space-x-2 bg-[#2a2a2a] px-3 py-1.5 rounded-lg">
+                  <span className="text-sm">
+                    Skill: {skillRange.min || '?'}-{skillRange.max || '?'}
+                  </span>
+                  <button
+                    onClick={removeSkillFilter}
+                    className="p-0.5 hover:bg-[#3a3a3a] rounded transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Custom Rules Chip */}
+              {customRules.length > 0 && (
+                <div className="flex items-center space-x-2 bg-[#2a2a2a] px-3 py-1.5 rounded-lg">
+                  <span className="text-sm">
+                    {customRules.length} custom rule{customRules.length !== 1 ? 's' : ''}
+                  </span>
+                  <button
+                    onClick={removeAllCustomRules}
+                    className="p-0.5 hover:bg-[#3a3a3a] rounded transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Clear All Filters Button */}
+              <button
+                onClick={resetFilters}
+                className="flex items-center space-x-1 bg-[#f2e205] text-[#0d0d0d] px-3 py-1.5 rounded-lg hover:bg-[#e6d600] transition-colors text-sm font-medium"
+              >
+                <RotateCcw size={14} />
+                <span>Clear All</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Generate Button */}
         <button
