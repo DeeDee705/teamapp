@@ -1,0 +1,246 @@
+Task: Team Generator uses attendance pool + composable filters (gender, age, skill, custom rules)
+Goals
+
+Remove location selection from Team Generator. It must consume the attendance pool from “Who’s Here” (selected location & groups + present members).
+
+Add a composable Filters panel (filters work together, not either/or):
+
+Gender (multi-select: Male/Female/Other)
+
+Age range (derived from birthYear)
+
+Skill range (1–5)
+
+Custom rules users can define on flexible attributes (text/number/enum/boolean)
+
+Keep Number of Teams working and honored by TeamBalancer.
+
+Optional: persist filters between sessions based on existing settings (if persistFilters true).
+
+Show a summary of active filters above Generate.
+
+Files to modify / add
+
+src/components/TeamGenerator.tsx
+
+src/utils/dataManager.ts (extend)
+
+src/types.ts (extend)
+
+Optional: src/utils/filters.ts (new helper for filter logic)
+
+Type updates (src/types.ts)
+
+Add flexible custom attributes and simple rule types. Keep backward compatibility.
+
+export type Gender = 'Male' | 'Female' | 'Other';
+
+export interface Member {
+  id: string;
+  name: string;
+  birthYear: number;
+  gender: Gender;
+  skillLevel: 1 | 2 | 3 | 4 | 5;
+  isPresent: boolean;
+  groupId?: string | null;
+  // NEW: user-defined attributes
+  attrs?: Record<string, string | number | boolean | string[]>;
+}
+
+export interface CustomAttribute {
+  key: string;
+  label: string;
+  type: 'text' | 'number' | 'enum' | 'boolean';
+  options?: string[]; // for enum
+}
+
+export interface CustomRule {
+  key: string; // attr key
+  op: 'equals' | 'contains' | 'gte' | 'lte' | 'in' | 'is';
+  value: any;
+}
+
+Data layer (src/utils/dataManager.ts)
+
+Extend without breaking existing methods.
+
+// Custom attributes config
+getCustomAttributes(): CustomAttribute[];
+addCustomAttribute(attr: CustomAttribute): void;
+removeCustomAttribute(key: string): void;
+
+// Update a member’s flexible attribute
+updateMemberAttr(locationId: string, memberId: string, key: string, value: any): void;
+
+// Queries (already exist, ensure these are implemented)
+getPresentMembersByGroups(locationId: string, groupIds: string[]): Member[];
+getPresentMembers(selectedLocationIds: string[]): Member[]; // legacy fallback
+
+
+Persistence: store customAttributes and member.attrs in the same persistence layer you use for members/locations.
+
+Filter helper (new) src/utils/filters.ts
+
+Create a pure function to compose filters. Age derives from birthYear.
+
+import { Member, CustomRule, Gender } from '../types';
+
+const year = new Date().getFullYear();
+const ageOf = (m: Member) => year - m.birthYear;
+
+export function applyFilters(
+  members: Member[],
+  opts: {
+    genderFilter: Record<Gender, boolean>;
+    ageRange?: { min?: number; max?: number };
+    skillRange?: { min?: number; max?: number };
+    customRules?: CustomRule[];
+  }
+): Member[] {
+  const { genderFilter, ageRange, skillRange, customRules } = opts;
+
+  return members.filter((m) => {
+    // gender
+    if (!genderFilter[m.gender]) return false;
+
+    // age
+    const age = ageOf(m);
+    if (ageRange?.min != null && age < ageRange.min) return false;
+    if (ageRange?.max != null && age > ageRange.max) return false;
+
+    // skill
+    if (skillRange?.min != null && m.skillLevel < skillRange.min) return false;
+    if (skillRange?.max != null && m.skillLevel > skillRange.max) return false;
+
+    // custom rules (AND)
+    if (customRules?.length) {
+      const attrs = m.attrs || {};
+      for (const r of customRules) {
+        const v = attrs[r.key];
+        const pass =
+          r.op === 'equals'   ? v === r.value :
+          r.op === 'contains' ? String(v ?? '').toLowerCase().includes(String(r.value).toLowerCase()) :
+          r.op === 'gte'      ? Number(v) >= Number(r.value) :
+          r.op === 'lte'      ? Number(v) <= Number(r.value) :
+          r.op === 'in'       ? Array.isArray(r.value) && r.value.includes(v) :
+          r.op === 'is'       ? (!!v) === (!!r.value) :
+          true;
+        if (!pass) return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+Team Generator (src/components/TeamGenerator.tsx)
+
+Replace the current location selection UI with:
+
+Pool assembly from navigation context (from “Who’s Here”): { selectedLocationId?, selectedGroupIds? }.
+
+Composable Filters panel UI.
+
+Summary chips.
+
+Generation call that uses applyFilters and honors teamCount.
+
+Key state (add):
+
+type Gender = 'Male' | 'Female' | 'Other';
+
+const [genderFilter, setGenderFilter] = useState<Record<Gender, boolean>>({
+  Male: true, Female: true, Other: true
+});
+const [ageRange, setAgeRange] = useState<{ min?: number; max?: number }>({});
+const [skillRange, setSkillRange] = useState<{ min?: number; max?: number }>({});
+const [customAttributes, setCustomAttributes] = useState<CustomAttribute[]>(dataManager.getCustomAttributes());
+const [customRules, setCustomRules] = useState<CustomRule[]>([]);
+
+
+Pool building:
+
+// read navigation data (from Who's Here)
+const navData = /* read from onNavigate data or router state */;
+const pool: Member[] = navData?.selectedGroupIds?.length
+  ? dataManager.getPresentMembersByGroups(navData.selectedLocationId, navData.selectedGroupIds)
+  : dataManager.getPresentMembers(/* legacy selected locations if applicable */);
+
+
+Generate action:
+
+import { applyFilters } from '../utils/filters';
+
+const filtered = applyFilters(pool, { genderFilter, ageRange, skillRange, customRules });
+
+const teams = TeamBalancer.generateTeams(filtered, {
+  algorithm: 'balanced',
+  teamCount: numberOfTeams,
+  numberOfTeams: numberOfTeams, // alias for back-compat
+});
+setTeams(teams);
+
+
+Remove any “Select Locations” block from this component.
+
+Filters UI (essentials)
+
+Gender: three checkboxes bound to genderFilter.
+
+Age: two inputs (min/max).
+
+Skill: two selects (1–5).
+
+Custom rules:
+
+Row list → “Add Rule” opens a small row: [Attribute select] [Operator select] [Value input/select] [Remove].
+
+Attribute select options come from customAttributes.
+
+A Reset Filters button clears all filters to defaults.
+
+Filter summary chips
+Above Generate button:
+
+Render chips like: Female, Age 8–12, Skill 2–4, 2 custom rules.
+
+Clicking a chip focuses that control.
+
+Optional: persistence
+If you already have settings.persistFilters, save and restore these states on mount/unmount.
+
+Acceptance criteria
+
+No location picker in Team Generator.
+
+Team Generator uses present members from selected groups passed by “Who’s Here.” If no context is provided, show a hint to open “Who’s Here.”
+
+Filters are composable:
+
+I can combine gender + age + skill + custom rules and see the pool shrink accordingly.
+
+Number of Teams is respected by TeamBalancer in all cases.
+
+UI shows active filter chips and a Reset Filters action.
+
+No TypeScript or runtime errors. Age is derived from birthYear.
+
+What to return
+
+Updated TeamGenerator.tsx with pool-from-attendance and the new Filters panel.
+
+New src/utils/filters.ts (or inline helper) with applyFilters.
+
+Updates to types.ts and dataManager.ts for custom attributes and member attrs.
+
+Minimal UI for adding/removing custom attributes somewhere (Settings or Who’s Here member editor) and setting member.attrs values.
+
+A short note on where the navigation context is read and how filter persistence is handled (if enabled).
+
+Notes
+
+Keep existing styling tone (dark theme, Tailwind classes).
+
+Do not reintroduce the old “generationType” either/or behavior; everything must compose.
+
+For performance: filter client-side on the pool; only recalc when the user changes a filter or number of teams.
