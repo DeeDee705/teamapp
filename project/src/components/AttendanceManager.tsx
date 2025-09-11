@@ -1,41 +1,43 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User, ChevronDown, ChevronRight, Search, CheckSquare, Square } from 'lucide-react';
+import { useState, useEffect, useCallback, memo } from 'react';
+import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User, ChevronDown, ChevronRight, Search, CheckSquare, Square, Plus } from 'lucide-react';
 import { AppScreen, Location, Group, Member, Gender } from '../types';
 import { DataManager } from '../utils/dataManager';
-import { APP_CONFIG } from '../config/app';
 
 interface AttendanceManagerProps {
   onNavigate: (screen: AppScreen, data?: any) => void;
 }
 
+// Debounce timer for presence updates
+let presenceTimer: Record<string, any> = {};
+
 export default function AttendanceManager({ onNavigate }: AttendanceManagerProps) {
   const [locations, setLocations] = useState<Location[]>([]);
-  const [selectedLocationId, setSelectedLocationId] = useState<string>('');
-  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
+  
+  // Accordion state - only one location OR group open at a time
+  const [openLocationId, setOpenLocationId] = useState<string | null>(null);
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  
+  // Selected groups for team generation
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   
-  // Location management
+  // Forms and management state
   const [showAddLocationForm, setShowAddLocationForm] = useState(false);
   const [newLocationName, setNewLocationName] = useState('');
-  
-  // Group management
   const [showAddGroupForm, setShowAddGroupForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   
-  // Member management
-  const [showAddMemberForm, setShowAddMemberForm] = useState(false);
+  // Optimistic presence updates
+  const [presenceByMemberId, setPresenceByMemberId] = useState<Record<string, boolean>>({});
+  
+  // Member form appears only inside open groups
+  const [showAddMemberFormGroupId, setShowAddMemberFormGroupId] = useState<string | null>(null);
   const [newMember, setNewMember] = useState({
     name: '',
     birthYear: new Date().getFullYear() - 25,
     gender: 'Male' as Gender,
-    skillLevel: 3 as 1 | 2 | 3 | 4 | 5,
-    groupId: null as string | null
+    skillLevel: 3 as 1 | 2 | 3 | 4 | 5
   });
-  
-  // Group UI state
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-  const [groupSearches, setGroupSearches] = useState<Record<string, string>>({});
   
   const [error, setError] = useState('');
 
@@ -46,36 +48,46 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
     loadLocations();
   }, []);
 
-  useEffect(() => {
-    // Apply default collapse setting when location changes
-    if (selectedLocation) {
-      const settings = dataManager.getSettings();
-      if (settings.defaultCollapseGroups) {
-        const collapsed: Record<string, boolean> = {};
-        selectedLocation.groups.forEach(group => {
-          const memberCount = groupedMembers[group.id]?.length || 0;
-          collapsed[group.id] = memberCount > 10; // Collapse groups with > 10 members
-        });
-        setExpandedGroups(collapsed);
-      }
-    }
-  }, [selectedLocation]);
+  // Accordion handlers - only one location OR group open at a time
+  const handleToggleLocation = useCallback((locationId: string) => {
+    setOpenGroupId(null); // Close any open group when switching locations
+    setShowAddMemberFormGroupId(null); // Close any open member forms
+    setOpenLocationId(prev => (prev === locationId ? null : locationId));
+  }, []);
 
-  useEffect(() => {
-    if (selectedLocationId) {
-      const location = locations.find(loc => loc.id === selectedLocationId);
-      setSelectedLocation(location || null);
-    } else {
-      setSelectedLocation(null);
-    }
-  }, [selectedLocationId, locations]);
+  const handleToggleGroup = useCallback((groupId: string) => {
+    setShowAddMemberFormGroupId(null); // Close any open member forms when switching groups
+    setOpenGroupId(prev => (prev === groupId ? null : groupId));
+  }, []);
+
+  // Optimistic presence updates with debounced saves
+  const debouncedSavePresence = useCallback((locationId: string, memberId: string, newVal: boolean) => {
+    clearTimeout(presenceTimer[memberId]);
+    presenceTimer[memberId] = setTimeout(() => {
+      dataManager.updateMemberPresence(locationId, memberId, newVal)
+        .catch(() => {
+          // Revert on failure
+          setPresenceByMemberId(prev => ({ ...prev, [memberId]: !newVal }));
+          setError('Failed to update presence - reverted change');
+          setTimeout(() => setError(''), 3000);
+        });
+    }, 300);
+  }, [dataManager]);
+
+  const handlePresenceToggle = useCallback((locationId: string, member: Member) => {
+    const currentPresence = presenceByMemberId[member.id] ?? member.isPresent;
+    const newVal = !currentPresence;
+
+    // Optimistic local update
+    setPresenceByMemberId(prev => ({ ...prev, [member.id]: newVal }));
+
+    // Debounced persist
+    debouncedSavePresence(locationId, member.id, newVal);
+  }, [presenceByMemberId, debouncedSavePresence]);
 
   const loadLocations = () => {
     const locs = dataManager.getLocations();
     setLocations(locs);
-    if (locs.length > 0 && !selectedLocationId) {
-      setSelectedLocationId(locs[0].id);
-    }
   };
 
   const handleAddLocation = () => {
@@ -96,13 +108,13 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   };
 
   const handleAddGroup = () => {
-    if (!selectedLocationId || !newGroupName.trim()) {
+    if (!openLocationId || !newGroupName.trim()) {
       setError('Group name is required');
       return;
     }
 
     try {
-      dataManager.createGroup(selectedLocationId, newGroupName.trim());
+      dataManager.createGroup(openLocationId, newGroupName.trim());
       setNewGroupName('');
       setShowAddGroupForm(false);
       setError('');
@@ -118,17 +130,21 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   };
 
   const handleUpdateGroup = () => {
-    if (!editingGroup || !newGroupName.trim()) return;
+    if (!editingGroup || !newGroupName.trim() || !openLocationId) return;
 
-    dataManager.renameGroup(selectedLocationId, editingGroup.id, newGroupName.trim());
+    dataManager.renameGroup(openLocationId, editingGroup.id, newGroupName.trim());
     setEditingGroup(null);
     setNewGroupName('');
     loadLocations();
   };
 
   const handleDeleteGroup = (groupId: string) => {
+    if (!openLocationId) return;
     if (confirm('Are you sure you want to delete this group? Members will be moved to Unassigned.')) {
-      dataManager.deleteGroup(selectedLocationId, groupId, { reassignToGroupId: null });
+      dataManager.deleteGroup(openLocationId, groupId, { reassignToGroupId: null });
+      if (openGroupId === groupId) {
+        setOpenGroupId(null); // Close if deleting open group
+      }
       loadLocations();
     }
   };
@@ -142,7 +158,7 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   };
 
   const handleAddMember = () => {
-    if (!selectedLocationId || !newMember.name.trim()) {
+    if (!openLocationId || !openGroupId || !newMember.name.trim()) {
       setError('Member name is required');
       return;
     }
@@ -154,18 +170,17 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
         gender: newMember.gender,
         skillLevel: newMember.skillLevel,
         isPresent: true,
-        groupId: newMember.groupId
+        groupId: openGroupId === 'unassigned' ? null : openGroupId
       };
 
-      dataManager.addMember(selectedLocationId, memberData);
+      dataManager.addMember(openLocationId, memberData);
+      setShowAddMemberFormGroupId(null);
       setNewMember({
         name: '',
         birthYear: new Date().getFullYear() - 25,
         gender: 'Male',
-        skillLevel: 3,
-        groupId: null
+        skillLevel: 3
       });
-      setShowAddMemberForm(false);
       setError('');
       loadLocations();
     } catch (err) {
@@ -173,52 +188,20 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
     }
   };
 
-  const handleTogglePresence = (memberId: string, isPresent: boolean) => {
-    dataManager.updateMemberPresence(selectedLocationId, memberId, isPresent);
-    loadLocations();
-  };
-
   const handleMoveMember = (memberId: string, toGroupId: string | null) => {
-    dataManager.moveMember(selectedLocationId, memberId, toGroupId);
+    if (!openLocationId) return;
+    dataManager.moveMember(openLocationId, memberId, toGroupId);
     loadLocations();
   };
 
-  const toggleGroupExpanded = (groupId: string) => {
-    setExpandedGroups(prev => ({
-      ...prev,
-      [groupId]: !prev[groupId]
-    }));
-  };
-
-  const handleGroupSearch = (groupId: string, search: string) => {
-    setGroupSearches(prev => ({
-      ...prev,
-      [groupId]: search
-    }));
-  };
-
-  const toggleAllGroupPresence = (groupId: string | null, isPresent: boolean) => {
-    const members = groupedMembers[groupId || 'unassigned'] || [];
-    members.forEach(member => {
-      dataManager.updateMemberPresence(selectedLocationId, member.id, isPresent);
-    });
-    loadLocations();
-  };
-
-  const filterMembersBySearch = (members: Member[], search: string) => {
-    if (!search.trim()) return members;
-    return members.filter(member => 
-      member.name.toLowerCase().includes(search.toLowerCase())
-    );
-  };
 
   const handleGenerateTeams = () => {
-    if (!selectedLocation || selectedGroupIds.length === 0) {
+    if (selectedGroupIds.length === 0) {
       setError('Please select at least one group to participate');
       return;
     }
 
-    onNavigate('team-generator', { selectedLocationId, selectedGroupIds });
+    onNavigate('team-generator', { locationId: openLocationId, selectedGroupIds });
   };
 
   const getAge = (birthYear: number) => new Date().getFullYear() - birthYear;
@@ -241,12 +224,151 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
     }
   };
 
-  const groupedMembers = selectedLocation?.members.reduce((acc, member) => {
+  // Get open location data
+  const openLocation = locations.find(loc => loc.id === openLocationId);
+  
+  // Group members for the open location
+  const groupedMembers = openLocation?.members.reduce((acc, member) => {
     const groupId = member.groupId || 'unassigned';
     if (!acc[groupId]) acc[groupId] = [];
     acc[groupId].push(member);
     return acc;
   }, {} as Record<string, Member[]>) || {};
+
+  // Memoized components for performance
+  const LocationHeader = memo(({ location, isOpen, memberCounts }: { 
+    location: Location; 
+    isOpen: boolean; 
+    memberCounts: { total: number; present: number };
+  }) => (
+    <div 
+      className={`p-4 border border-[#3a3a3a] rounded-lg cursor-pointer transition-all duration-200 ${
+        isOpen ? 'bg-[#2a2a2a] border-[#F27A6B]' : 'bg-[#1a1a1a] hover:bg-[#2a2a2a]'
+      }`}
+      onClick={() => handleToggleLocation(location.id)}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          <MapPin size={16} className="text-[#F27A6B]" />
+          <h3 className="font-medium">{location.name}</h3>
+        </div>
+        <div className="text-sm opacity-60">
+          {memberCounts.present}/{memberCounts.total} present
+        </div>
+      </div>
+    </div>
+  ));
+
+  const GroupHeader = memo(({ 
+    location, 
+    group, 
+    isOpen, 
+    memberCounts,
+    isSelected
+  }: { 
+    location: Location;
+    group: Group | { id: 'unassigned'; name: 'Unassigned' }; 
+    isOpen: boolean; 
+    memberCounts: { total: number; present: number };
+    isSelected: boolean;
+  }) => (
+    <div 
+      className={`p-3 border border-[#4a4a4a] rounded-lg cursor-pointer transition-all duration-200 ${
+        isOpen ? 'bg-[#3a3a3a] border-[#F27A6B]' : 'bg-[#2a2a2a] hover:bg-[#3a3a3a]'
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <div 
+          className="flex items-center space-x-3 flex-1"
+          onClick={() => handleToggleGroup(group.id)}
+        >
+          {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => handleToggleGroupSelection(group.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="w-4 h-4 rounded"
+          />
+          <span className="font-medium text-sm">{group.name}</span>
+          <span className="text-xs opacity-60">
+            {memberCounts.present}/{memberCounts.total}
+          </span>
+        </div>
+        {group.id !== 'unassigned' && (
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEditGroup(group as Group);
+              }}
+              className="p-1 text-[#F27A6B] hover:bg-[#F27A6B] hover:bg-opacity-20 rounded transition-colors"
+            >
+              <Edit2 size={12} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteGroup(group.id);
+              }}
+              className="p-1 text-red-400 hover:bg-red-400 hover:bg-opacity-20 rounded transition-colors"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  ));
+
+  const MemberRow = memo(({ 
+    member, 
+    locationId,
+    isPresent
+  }: { 
+    member: Member; 
+    locationId: string;
+    isPresent: boolean;
+  }) => {
+    
+    return (
+      <div className="flex items-center justify-between p-3 bg-[#4a4a4a] rounded-lg transition-all duration-200">
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => handlePresenceToggle(locationId, member)}
+            className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+              isPresent 
+                ? 'bg-green-500 border-green-500 text-white' 
+                : 'border-gray-400 text-gray-400'
+            }`}
+          >
+            {isPresent && <UserCheck size={14} />}
+          </button>
+          {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
+          <div>
+            <div className="font-medium text-sm">{member.name}</div>
+            {settings.showAge && <div className="text-xs opacity-60">Age {getAge(member.birthYear)}</div>}
+          </div>
+          {settings.showSkill && (
+            <div className="flex space-x-1">
+              {renderSkillStars(member.skillLevel)}
+            </div>
+          )}
+        </div>
+        <select
+          value={member.groupId || ''}
+          onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
+          className="bg-[#5a5a5a] text-[#f2ebc4] border border-[#6a6a6a] rounded px-2 py-1 text-xs focus:outline-none focus:border-[#F27A6B]"
+        >
+          <option value="">Unassigned</option>
+          {openLocation?.groups.map(g => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </select>
+      </div>
+    );
+  });
 
   const selectedGroupsText = selectedGroupIds.length > 0 
     ? `${selectedGroupIds.length} group${selectedGroupIds.length > 1 ? 's' : ''} selected`
@@ -265,7 +387,17 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
           </button>
           <h1 className="text-xl font-semibold">Who's Here</h1>
         </div>
-        <div className="text-sm font-medium">{selectedGroupsText}</div>
+        <div className="flex items-center space-x-4">
+          <div className="text-sm font-medium">{selectedGroupsText}</div>
+          {selectedGroupIds.length > 0 && (
+            <button
+              onClick={handleGenerateTeams}
+              className="bg-[#0d0d0d] text-[#F27A6B] px-3 py-1 rounded-lg text-sm font-medium hover:bg-opacity-80 transition-colors"
+            >
+              Generate Teams
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="p-4">
@@ -275,10 +407,11 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
           </div>
         )}
 
-        {/* Location Selector */}
-        <div className="bg-[#1a1a1a] rounded-xl p-4 mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-semibold">Location</h3>
+        {/* Progressive Disclosure Accordion */}
+        <div className="space-y-4">
+          {/* Add Location Button */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Locations</h2>
             <button
               onClick={() => setShowAddLocationForm(true)}
               className="bg-[#F27A6B] text-[#0d0d0d] px-3 py-1 rounded-lg text-sm font-medium hover:bg-[#e36a5b] transition-colors"
@@ -287,8 +420,9 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
             </button>
           </div>
 
+          {/* Add Location Form */}
           {showAddLocationForm && (
-            <div className="mb-4 p-3 bg-[#2a2a2a] rounded-lg">
+            <div className="p-4 bg-[#2a2a2a] rounded-lg border border-[#3a3a3a]">
               <input
                 type="text"
                 placeholder="Location name"
@@ -297,7 +431,7 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                   setNewLocationName(e.target.value);
                   setError('');
                 }}
-                className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B] mb-2"
+                className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B] mb-3"
                 autoFocus
               />
               <div className="flex space-x-2">
@@ -321,504 +455,225 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
             </div>
           )}
 
+          {/* Level 1: Locations Accordion */}
           {locations.length > 0 ? (
-            <select
-              value={selectedLocationId}
-              onChange={(e) => setSelectedLocationId(e.target.value)}
-              className="w-full bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2 focus:outline-none focus:border-[#F27A6B]"
-            >
-              {locations.map(location => (
-                <option key={location.id} value={location.id}>
-                  {location.name} ({location.members.length} members)
-                </option>
-              ))}
-            </select>
+            <div className="space-y-3">
+              {locations.map(location => {
+                const isLocationOpen = openLocationId === location.id;
+                const memberCounts = {
+                  total: location.members.length,
+                  present: location.members.filter(m => 
+                    (presenceByMemberId[m.id] ?? m.isPresent)
+                  ).length
+                };
+
+                return (
+                  <div key={location.id} className="space-y-2">
+                    <LocationHeader
+                      location={location}
+                      isOpen={isLocationOpen}
+                      memberCounts={memberCounts}
+                    />
+
+                    {/* Level 2: Groups Accordion (inside open location) */}
+                    {isLocationOpen && (
+                      <div className="ml-4 space-y-2">
+                        {/* Add Group Button and Form */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-gray-400">Groups</span>
+                          <button
+                            onClick={() => setShowAddGroupForm(true)}
+                            disabled={location.groups.length >= settings.maxGroupsPerLocation}
+                            className="bg-[#F27A6B] text-[#0d0d0d] px-2 py-1 rounded text-xs font-medium hover:bg-[#e36a5b] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            + Add Group ({location.groups.length}/{settings.maxGroupsPerLocation})
+                          </button>
+                        </div>
+
+                        {(showAddGroupForm || editingGroup) && (
+                          <div className="p-3 bg-[#2a2a2a] rounded-lg border border-[#3a3a3a]">
+                            <input
+                              type="text"
+                              placeholder="Group name"
+                              value={newGroupName}
+                              onChange={(e) => {
+                                setNewGroupName(e.target.value);
+                                setError('');
+                              }}
+                              className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B] mb-3"
+                              autoFocus
+                            />
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={editingGroup ? handleUpdateGroup : handleAddGroup}
+                                className="bg-[#F27A6B] text-[#0d0d0d] px-3 py-1 rounded text-sm font-medium hover:bg-[#e36a5b] transition-colors"
+                              >
+                                {editingGroup ? 'Update' : 'Add'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setShowAddGroupForm(false);
+                                  setEditingGroup(null);
+                                  setNewGroupName('');
+                                  setError('');
+                                }}
+                                className="px-3 py-1 text-[#f2ebc4] border border-[#4a4a4a] rounded text-sm hover:bg-[#2a2a2a] transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Groups List */}
+                        {[...location.groups, { id: 'unassigned', name: 'Unassigned' }].map(group => {
+                          const members = groupedMembers[group.id] || [];
+                          const isGroupOpen = openGroupId === group.id;
+                          const memberCounts = {
+                            total: members.length,
+                            present: members.filter(m => 
+                              (presenceByMemberId[m.id] ?? m.isPresent)
+                            ).length
+                          };
+                          const isSelected = selectedGroupIds.includes(group.id);
+
+                          return (
+                            <div key={group.id} className="space-y-2">
+                              <GroupHeader
+                                location={location}
+                                group={group}
+                                isOpen={isGroupOpen}
+                                memberCounts={memberCounts}
+                                isSelected={isSelected}
+                              />
+
+                              {/* Level 3: Members List (inside open group) */}
+                              {isGroupOpen && (
+                                <div className="ml-4 space-y-2">
+                                  {/* Add Member Button and Form - only when group is open */}
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs text-gray-500">Members</span>
+                                    <button
+                                      onClick={() => {
+                                        setShowAddMemberFormGroupId(group.id);
+                                        setNewMember({
+                                          name: '',
+                                          birthYear: new Date().getFullYear() - 25,
+                                          gender: 'Male',
+                                          skillLevel: 3
+                                        });
+                                      }}
+                                      className="bg-[#F27A6B] text-[#0d0d0d] px-2 py-1 rounded text-xs font-medium hover:bg-[#e36a5b] transition-colors"
+                                    >
+                                      + Add Member
+                                    </button>
+                                  </div>
+
+                                  {/* Add Member Form - only appears in open group */}
+                                  {showAddMemberFormGroupId === group.id && (
+                                    <div className="p-3 bg-[#3a3a3a] rounded-lg border border-[#4a4a4a]">
+                                      <div className="grid grid-cols-1 gap-2 mb-3">
+                                        <input
+                                          type="text"
+                                          placeholder="Name"
+                                          value={newMember.name}
+                                          onChange={(e) => setNewMember(prev => ({ ...prev, name: e.target.value }))}
+                                          className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                          autoFocus
+                                        />
+                                        {settings.showAge && (
+                                          <input
+                                            type="number"
+                                            placeholder="Birth Year"
+                                            value={newMember.birthYear}
+                                            onChange={(e) => setNewMember(prev => ({ ...prev, birthYear: parseInt(e.target.value) || new Date().getFullYear() - 25 }))}
+                                            className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                          />
+                                        )}
+                                        {settings.showGender && (
+                                          <select
+                                            value={newMember.gender}
+                                            onChange={(e) => setNewMember(prev => ({ ...prev, gender: e.target.value as Gender }))}
+                                            className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                          >
+                                            <option value="Male">Male</option>
+                                            <option value="Female">Female</option>
+                                            <option value="Other">Other</option>
+                                          </select>
+                                        )}
+                                        {settings.showSkill && (
+                                          <select
+                                            value={newMember.skillLevel}
+                                            onChange={(e) => setNewMember(prev => ({ ...prev, skillLevel: parseInt(e.target.value) as 1 | 2 | 3 | 4 | 5 }))}
+                                            className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
+                                          >
+                                            <option value={1}>Skill Level 1</option>
+                                            <option value={2}>Skill Level 2</option>
+                                            <option value={3}>Skill Level 3</option>
+                                            <option value={4}>Skill Level 4</option>
+                                            <option value={5}>Skill Level 5</option>
+                                          </select>
+                                        )}
+                                      </div>
+                                      <div className="flex space-x-2">
+                                        <button
+                                          onClick={handleAddMember}
+                                          className="bg-[#F27A6B] text-[#0d0d0d] px-3 py-1 rounded text-sm font-medium hover:bg-[#e36a5b] transition-colors"
+                                        >
+                                          Add to {group.name}
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setShowAddMemberFormGroupId(null);
+                                            setNewMember({ name: '', birthYear: new Date().getFullYear() - 25, gender: 'Male', skillLevel: 3 });
+                                          }}
+                                          className="px-3 py-1 text-[#f2ebc4] border border-[#5a5a5a] rounded text-sm hover:bg-[#2a2a2a] transition-colors"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Members List */}
+                                  {members.length > 0 ? (
+                                    <div className="space-y-2">
+                                      {members.map(member => {
+                                        const isPresent = presenceByMemberId[member.id] ?? member.isPresent;
+                                        return (
+                                          <MemberRow
+                                            key={member.id}
+                                            member={member}
+                                            locationId={location.id}
+                                            isPresent={isPresent}
+                                          />
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="text-center py-4">
+                                      <User size={24} className="mx-auto mb-2 opacity-40" />
+                                      <p className="text-xs opacity-60">No members in this group</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           ) : (
-            <div className="text-center py-4">
+            <div className="text-center py-8">
               <MapPin size={48} className="mx-auto mb-2 opacity-40" />
               <p className="text-sm opacity-60">No locations yet. Add your first location to get started.</p>
             </div>
           )}
         </div>
-
-        {selectedLocation && (
-          <>
-            {/* Groups Section */}
-            <div className="bg-[#1a1a1a] rounded-xl p-4 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">Groups</h3>
-                <button
-                  onClick={() => setShowAddGroupForm(true)}
-                  disabled={selectedLocation.groups.length >= APP_CONFIG.MAX_GROUPS_PER_LOCATION}
-                  className="bg-[#F27A6B] text-[#0d0d0d] px-3 py-1 rounded-lg text-sm font-medium hover:bg-[#e36a5b] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  + Add Group ({selectedLocation.groups.length}/{APP_CONFIG.MAX_GROUPS_PER_LOCATION})
-                </button>
-              </div>
-
-              {(showAddGroupForm || editingGroup) && (
-                <div className="mb-4 p-3 bg-[#2a2a2a] rounded-lg">
-                  <input
-                    type="text"
-                    placeholder="Group name"
-                    value={newGroupName}
-                    onChange={(e) => {
-                      setNewGroupName(e.target.value);
-                      setError('');
-                    }}
-                    className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B] mb-2"
-                    autoFocus
-                  />
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={editingGroup ? handleUpdateGroup : handleAddGroup}
-                      className="bg-[#F27A6B] text-[#0d0d0d] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#e36a5b] transition-colors"
-                    >
-                      {editingGroup ? 'Update' : 'Add'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowAddGroupForm(false);
-                        setEditingGroup(null);
-                        setNewGroupName('');
-                        setError('');
-                      }}
-                      className="px-4 py-2 text-[#f2ebc4] border border-[#4a4a4a] rounded-lg text-sm hover:bg-[#2a2a2a] transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                {selectedLocation.groups.map(group => {
-                  const memberCount = groupedMembers[group.id]?.length || 0;
-                  const isSelected = selectedGroupIds.includes(group.id);
-                  
-                  return (
-                    <div
-                      key={group.id}
-                      className={`p-3 rounded-lg border transition-colors cursor-pointer ${
-                        isSelected 
-                          ? 'bg-[#F27A6B] bg-opacity-20 border-[#F27A6B]' 
-                          : 'bg-[#2a2a2a] border-[#3a3a3a] hover:bg-[#3a3a3a]'
-                      }`}
-                      onClick={() => handleToggleGroupSelection(group.id)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleGroupSelection(group.id)}
-                            className="w-4 h-4 rounded"
-                          />
-                          <div>
-                            <div className="font-medium">{group.name}</div>
-                            <div className="text-sm opacity-60">{memberCount} members</div>
-                          </div>
-                        </div>
-                        <div className="flex space-x-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEditGroup(group);
-                            }}
-                            className="p-1 text-[#F27A6B] hover:bg-[#F27A6B] hover:bg-opacity-20 rounded transition-colors"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteGroup(group.id);
-                            }}
-                            className="p-1 text-red-400 hover:bg-red-400 hover:bg-opacity-20 rounded transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Members Section */}
-            <div className="bg-[#1a1a1a] rounded-xl p-4 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">Members</h3>
-                <button
-                  onClick={() => setShowAddMemberForm(true)}
-                  className="bg-[#F27A6B] text-[#0d0d0d] px-3 py-1 rounded-lg text-sm font-medium hover:bg-[#e36a5b] transition-colors"
-                >
-                  + Add Member
-                </button>
-              </div>
-
-              {showAddMemberForm && (
-                <div className="mb-4 p-4 bg-[#2a2a2a] rounded-lg">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                    <input
-                      type="text"
-                      placeholder="Name"
-                      value={newMember.name}
-                      onChange={(e) => setNewMember(prev => ({ ...prev, name: e.target.value }))}
-                      className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                    />
-                    {settings.showAge && (
-                      <input
-                        type="number"
-                        placeholder="Birth Year"
-                        value={newMember.birthYear}
-                        onChange={(e) => setNewMember(prev => ({ ...prev, birthYear: parseInt(e.target.value) || new Date().getFullYear() - 25 }))}
-                        className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                      />
-                    )}
-                    {settings.showGender && (
-                      <select
-                        value={newMember.gender}
-                        onChange={(e) => setNewMember(prev => ({ ...prev, gender: e.target.value as Gender }))}
-                        className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    )}
-                    {settings.showSkill && (
-                      <select
-                        value={newMember.skillLevel}
-                        onChange={(e) => setNewMember(prev => ({ ...prev, skillLevel: parseInt(e.target.value) as 1 | 2 | 3 | 4 | 5 }))}
-                        className="bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                      >
-                        <option value={1}>Skill Level 1</option>
-                        <option value={2}>Skill Level 2</option>
-                        <option value={3}>Skill Level 3</option>
-                        <option value={4}>Skill Level 4</option>
-                        <option value={5}>Skill Level 5</option>
-                      </select>
-                    )}
-                  </div>
-                  <select
-                    value={newMember.groupId || ''}
-                    onChange={(e) => setNewMember(prev => ({ ...prev, groupId: e.target.value || null }))}
-                    className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B] mb-3"
-                  >
-                    <option value="">Unassigned</option>
-                    {selectedLocation.groups.map(group => (
-                      <option key={group.id} value={group.id}>{group.name}</option>
-                    ))}
-                  </select>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleAddMember}
-                      className="bg-[#F27A6B] text-[#0d0d0d] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#e36a5b] transition-colors"
-                    >
-                      Add Member
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowAddMemberForm(false);
-                        setNewMember({
-                          name: '',
-                          birthYear: new Date().getFullYear() - 25,
-                          gender: 'Male',
-                          skillLevel: 3,
-                          groupId: null
-                        });
-                        setError('');
-                      }}
-                      className="px-4 py-2 text-[#f2ebc4] border border-[#4a4a4a] rounded-lg text-sm hover:bg-[#2a2a2a] transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Group-aware Members Display */}
-              {selectedLocation.groups.length > 0 ? (
-                <div className="space-y-3">
-                  {/* Grouped Members */}
-                  {selectedLocation.groups.map(group => {
-                    const members = groupedMembers[group.id] || [];
-                    const isExpanded = expandedGroups[group.id] ?? true;
-                    const search = groupSearches[group.id] || '';
-                    const filteredMembers = filterMembersBySearch(members, search);
-                    const presentCount = members.filter(m => m.isPresent).length;
-                    
-                    return (
-                      <div key={group.id} className="bg-[#2a2a2a] rounded-lg border border-[#3a3a3a]">
-                        {/* Group Header */}
-                        <div className="p-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-3">
-                              <button
-                                onClick={() => toggleGroupExpanded(group.id)}
-                                className="text-[#f2ebc4] hover:text-[#F27A6B] transition-colors"
-                              >
-                                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                              </button>
-                              <input
-                                type="checkbox"
-                                checked={selectedGroupIds.includes(group.id)}
-                                onChange={() => handleToggleGroupSelection(group.id)}
-                                className="w-4 h-4 rounded"
-                              />
-                              <h4 className="font-medium text-[#f2ebc4]">
-                                {group.name} ({members.length} members, {presentCount} present)
-                              </h4>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEditGroup(group);
-                                }}
-                                className="p-1 text-[#F27A6B] hover:bg-[#F27A6B] hover:bg-opacity-20 rounded transition-colors"
-                              >
-                                <Edit2 size={14} />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteGroup(group.id);
-                                }}
-                                className="p-1 text-red-400 hover:bg-red-400 hover:bg-opacity-20 rounded transition-colors"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Group Content (when expanded) */}
-                        {isExpanded && (
-                          <div className="px-4 pb-4">
-                            {/* Group Toolbar */}
-                            <div className="flex items-center space-x-2 mb-3">
-                              <div className="flex-1 relative">
-                                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                                <input
-                                  type="text"
-                                  placeholder="Search members..."
-                                  value={search}
-                                  onChange={(e) => handleGroupSearch(group.id, e.target.value)}
-                                  className="w-full bg-[#3a3a3a] text-[#f2ebc4] border border-[#4a4a4a] rounded-lg pl-10 pr-3 py-2 text-sm focus:outline-none focus:border-[#F27A6B]"
-                                />
-                              </div>
-                              <button
-                                onClick={() => toggleAllGroupPresence(group.id, true)}
-                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
-                                title="Mark all present"
-                              >
-                                <CheckSquare size={14} />
-                              </button>
-                              <button
-                                onClick={() => toggleAllGroupPresence(group.id, false)}
-                                className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
-                                title="Mark all absent"
-                              >
-                                <Square size={14} />
-                              </button>
-                            </div>
-
-                            {/* Members List */}
-                            {filteredMembers.length > 0 ? (
-                              <div className="space-y-2">
-                                {filteredMembers.map(member => (
-                                  <div key={member.id} className="flex items-center justify-between p-3 bg-[#3a3a3a] rounded-lg">
-                                    <div className="flex items-center space-x-3">
-                                      <button
-                                        onClick={() => handleTogglePresence(member.id, !member.isPresent)}
-                                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                          member.isPresent 
-                                            ? 'bg-green-500 border-green-500 text-white' 
-                                            : 'border-gray-400 text-gray-400'
-                                        }`}
-                                      >
-                                        {member.isPresent && <UserCheck size={14} />}
-                                      </button>
-                                      {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
-                                      <div>
-                                        <div className="font-medium">{member.name}</div>
-                                        {settings.showAge && <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>}
-                                      </div>
-                                      {settings.showSkill && (
-                                        <div className="flex space-x-1">
-                                          {renderSkillStars(member.skillLevel)}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <select
-                                      value={member.groupId || ''}
-                                      onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
-                                      className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#F27A6B]"
-                                    >
-                                      <option value="">Unassigned</option>
-                                      {selectedLocation.groups.map(g => (
-                                        <option key={g.id} value={g.id}>{g.name}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : members.length > 0 ? (
-                              <div className="text-center py-4 text-gray-400">
-                                No members match "{search}"
-                              </div>
-                            ) : (
-                              <div className="text-center py-4 text-gray-400">
-                                No members in this group
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {/* Unassigned Members */}
-                  {groupedMembers.unassigned && groupedMembers.unassigned.length > 0 && (
-                    <div className="bg-[#2a2a2a] rounded-lg border border-[#3a3a3a]">
-                      <div className="p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <button
-                              onClick={() => toggleGroupExpanded('unassigned')}
-                              className="text-[#f2ebc4] hover:text-[#F27A6B] transition-colors"
-                            >
-                              {expandedGroups.unassigned ?? true ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                            </button>
-                            <h4 className="font-medium text-gray-400">
-                              Unassigned ({groupedMembers.unassigned.length} members)
-                            </h4>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => toggleAllGroupPresence(null, true)}
-                              className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
-                              title="Mark all present"
-                            >
-                              <CheckSquare size={14} />
-                            </button>
-                            <button
-                              onClick={() => toggleAllGroupPresence(null, false)}
-                              className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm transition-colors"
-                              title="Mark all absent"
-                            >
-                              <Square size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {(expandedGroups.unassigned ?? true) && (
-                        <div className="px-4 pb-4">
-                          <div className="space-y-2">
-                            {groupedMembers.unassigned.map(member => (
-                              <div key={member.id} className="flex items-center justify-between p-3 bg-[#3a3a3a] rounded-lg">
-                                <div className="flex items-center space-x-3">
-                                  <button
-                                    onClick={() => handleTogglePresence(member.id, !member.isPresent)}
-                                    className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                      member.isPresent 
-                                        ? 'bg-green-500 border-green-500 text-white' 
-                                        : 'border-gray-400 text-gray-400'
-                                    }`}
-                                  >
-                                    {member.isPresent && <UserCheck size={14} />}
-                                  </button>
-                                  {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
-                                  <div>
-                                    <div className="font-medium">{member.name}</div>
-                                    {settings.showAge && <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>}
-                                  </div>
-                                  {settings.showSkill && (
-                                    <div className="flex space-x-1">
-                                      {renderSkillStars(member.skillLevel)}
-                                    </div>
-                                  )}
-                                </div>
-                                <select
-                                  value={member.groupId || ''}
-                                  onChange={(e) => handleMoveMember(member.id, e.target.value || null)}
-                                  className="bg-[#4a4a4a] text-[#f2ebc4] border border-[#5a5a5a] rounded px-2 py-1 text-sm focus:outline-none focus:border-[#F27A6B]"
-                                >
-                                  <option value="">Unassigned</option>
-                                  {selectedLocation.groups.map(group => (
-                                    <option key={group.id} value={group.id}>{group.name}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                /* Fallback to simple list when no groups exist */
-                <div className="space-y-2">
-                  {selectedLocation.members.map(member => (
-                    <div key={member.id} className="flex items-center justify-between p-3 bg-[#2a2a2a] rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <button
-                          onClick={() => handleTogglePresence(member.id, !member.isPresent)}
-                          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                            member.isPresent 
-                              ? 'bg-green-500 border-green-500 text-white' 
-                              : 'border-gray-400 text-gray-400'
-                          }`}
-                        >
-                          {member.isPresent && <UserCheck size={14} />}
-                        </button>
-                        {settings.showGender && <div className={`w-3 h-3 rounded-full ${getGenderColor(member.gender)}`}></div>}
-                        <div>
-                          <div className="font-medium">{member.name}</div>
-                          {settings.showAge && <div className="text-sm opacity-60">Age {getAge(member.birthYear)}</div>}
-                        </div>
-                        {settings.showSkill && (
-                          <div className="flex space-x-1">
-                            {renderSkillStars(member.skillLevel)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {selectedLocation.members.length === 0 && (
-                <div className="text-center py-8">
-                  <User size={48} className="mx-auto mb-2 opacity-40" />
-                  <p className="text-sm opacity-60">No members yet. Add your first member to get started.</p>
-                </div>
-              )}
-            </div>
-
-            {/* Footer Actions */}
-            <div className="flex space-x-3">
-              <button
-                onClick={handleGenerateTeams}
-                disabled={selectedGroupIds.length === 0}
-                className="flex-1 bg-[#f2e205] text-[#0d0d0d] py-4 rounded-xl font-semibold hover:bg-[#e6d600] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Generate Teams ({selectedGroupIds.length} groups)
-              </button>
-              <button
-                onClick={() => onNavigate('home')}
-                className="px-6 py-4 text-[#f2ebc4] border border-[#3a3a3a] rounded-xl hover:bg-[#2a2a2a] transition-colors"
-              >
-                Done
-              </button>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );

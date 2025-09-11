@@ -1,0 +1,139 @@
+Task: Redesign “Who’s Here” to an accordion (one-open-at-a-time) with instant toggles
+Objectives
+
+Convert Who’s Here into a progressive disclosure UI:
+
+Level 1: Locations list (closed by default).
+
+Level 2: Inside a location, show Groups (stacked, closed by default).
+
+Level 3: Inside a group, show its Members (only when the group is open).
+
+Only one location OR group is open at a time (open one = close the others).
+
+You can add members only when a group is open (add form appears inside that group).
+
+Make checkbox/presence toggles feel instant (optimistic UI + debounce save).
+
+Reduce clutter: when a group is opened, all other groups and all other locations collapse.
+
+Files to modify (names may vary)
+
+src/components/AttendanceManager.tsx (or LocationManager.tsx / WhosHere.tsx)
+
+src/utils/dataManager.ts (presence updating, member move, etc.)
+
+Optional small CSS/Tailwind tweaks where needed.
+
+UI/State behavior
+A) Accordion structure
+
+Locations accordion
+
+Renders a list of location headers.
+
+Clicking a location header sets openLocationId to that id and clears openGroupId.
+
+Clicking the same open location closes it (set openLocationId = null).
+
+Groups accordion (inside open location)
+
+Renders a list of group headers for that location (incl. “Unassigned” pseudo-group).
+
+Clicking a group header sets openGroupId and closes other groups within the same location.
+
+If a new location is opened, reset openGroupId = null.
+
+Members list
+
+Only render the members list for the currently open group.
+
+Show add-member form/button inside the open group. Hide it elsewhere.
+
+B) Add-member rule
+
+“+ Add Member” button is visible only when a group is open, and the new member is auto-assigned to that open group.
+
+Moving a member is done via a small dropdown in the member row, but the dropdown exists only when the member row is visible (i.e., inside the open group).
+
+C) Presence checkbox: instant + resilient
+
+Optimistic UI: update local state immediately on toggle.
+
+Persist with a debounced call to dataManager.updateMemberPresence(locationId, memberId, newState) (e.g., 250–400ms).
+
+If the save fails, revert the local state and show a small toast/error.
+
+Avoid full “reload location” after each toggle—just update the member in place.
+
+D) Performance & clarity
+
+Only render members for the open group to keep the DOM small.
+
+Use React.memo for member rows and group headers to avoid unnecessary re-renders.
+
+Add tiny expand/collapse animation (height/opacity) for groups.
+
+State shape (AttendanceManager)
+const [openLocationId, setOpenLocationId] = useState<string | null>(null);
+const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+
+// optional: local map for presence optimistic updates
+const [presenceByMemberId, setPresenceByMemberId] = useState<Record<string, boolean>>({});
+
+Handlers
+const handleToggleLocation = (locationId: string) => {
+  setOpenGroupId(null);
+  setOpenLocationId(prev => (prev === locationId ? null : locationId));
+};
+
+const handleToggleGroup = (groupId: string) => {
+  setOpenGroupId(prev => (prev === groupId ? null : groupId));
+};
+
+const handlePresenceToggle = (locationId: string, member: Member) => {
+  const newVal = !(presenceByMemberId[member.id] ?? member.isPresent);
+
+  // optimistic local update
+  setPresenceByMemberId(prev => ({ ...prev, [member.id]: newVal }));
+
+  // debounced persist
+  debouncedSavePresence(locationId, member.id, newVal);
+};
+
+
+Implement a simple debounce helper (module-level or hook):
+
+let presenceTimer: Record<string, any> = {};
+const debouncedSavePresence = (locationId: string, memberId: string, newVal: boolean) => {
+  clearTimeout(presenceTimer[memberId]);
+  presenceTimer[memberId] = setTimeout(() => {
+    DataManager.getInstance()
+      .updateMemberPresence(locationId, memberId, newVal)
+      .catch(() => {
+        // revert on failure
+        setPresenceByMemberId(prev => ({ ...prev, [memberId]: !newVal }));
+        // TODO: toast error
+      });
+  }, 300);
+};
+
+
+Use presence like:
+
+const isPresent = presenceByMemberId[m.id] ?? m.isPresent;
+
+Rendering rules
+Locations list
+
+Each location header shows: name, member counts (present/total), and a caret icon.
+
+Clicking header calls handleToggleLocation(location.id).
+
+Only if openLocationId === location.id → render the groups list for that location.
+
+Groups list (inside open location)
+
+Group header shows: name, counts (present/total within that group), caret icon.
+
+A small checkbox “Include in activity” can stay if you use
