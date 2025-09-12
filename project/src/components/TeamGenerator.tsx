@@ -4,16 +4,14 @@ import { AppScreen, Member, Team, Gender, CustomAttribute, CustomRule, TeamGener
 import { DataManager } from '../utils/dataManager';
 import { TeamBalancer } from '../utils/teamBalancer';
 import { applyFilters } from '../utils/filters';
+import { SelectionBar } from './SelectionBar';
+import { useSelectionStore } from '../state/selectionStore';
 
 interface TeamGeneratorProps {
   onNavigate: (screen: AppScreen, data?: any) => void;
-  screenData?: {
-    selectedLocationId?: string;
-    selectedGroupIds?: string[];
-  };
 }
 
-export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorProps) {
+export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
   // Pool and teams
   const [attendancePool, setAttendancePool] = useState<Member[]>([]);
   const [filteredMembers, setFilteredMembers] = useState<Member[]>([]);
@@ -42,6 +40,9 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
   const dataManager = DataManager.getInstance();
   const settings = dataManager.getSettings();
   
+  // Selection store - subscribe to reactive values
+  const selectedMemberIds = useSelectionStore(state => state.selectedMemberIds);
+  
   // Helper function to save filters when persistFilters is enabled
   const saveFiltersToStorage = () => {
     if (settings.persistFilters) {
@@ -57,15 +58,8 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
   };
 
   useEffect(() => {
-    // Load custom attributes
+    // Load custom attributes on mount
     setCustomAttributes(dataManager.getCustomAttributes());
-    
-    // Build attendance pool from navigation context (from "Who's Here")
-    const pool: Member[] = screenData?.selectedLocationId && screenData?.selectedGroupIds?.length
-      ? dataManager.getPresentMembersByGroups(screenData.selectedLocationId, screenData.selectedGroupIds)
-      : [];
-    
-    setAttendancePool(pool);
     
     // Load persisted filters if enabled
     if (settings.persistFilters) {
@@ -85,7 +79,13 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
         }
       }
     }
-  }, [screenData]);
+  }, []);
+
+  // Update attendance pool when selection changes
+  useEffect(() => {
+    const pool = dataManager.getPresentMembersByIds(selectedMemberIds);
+    setAttendancePool(pool);
+  }, [selectedMemberIds, dataManager]);
 
   // Apply filters whenever filters or pool changes
   useEffect(() => {
@@ -209,7 +209,20 @@ export default function TeamGenerator({ onNavigate, screenData }: TeamGeneratorP
         </button>
       </div>
 
+      {/* Selection Bar */}
+      <SelectionBar />
+
       <div className="p-4 space-y-6">
+        
+        {/* No Selection Hint */}
+        {attendancePool.length === 0 && (
+          <div className="bg-[#1a1a1a] border border-[#3a3a3a] rounded-xl p-4 text-center">
+            <p className="text-sm opacity-80">
+              No one selected. Open the bar above to pick locations/groups/members.
+            </p>
+          </div>
+        )}
+
         {/* Filter Toggle */}
         <div className="bg-[#1a1a1a] rounded-xl p-4">
           <div className="flex items-center justify-between">
