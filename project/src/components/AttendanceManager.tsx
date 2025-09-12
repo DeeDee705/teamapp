@@ -385,7 +385,7 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
           >
             <ArrowLeft size={20} />
           </button>
-          <h1 className="text-xl font-semibold">Who's Here</h1>
+          <h1 className="text-xl font-semibold">People</h1>
         </div>
         <div className="flex items-center space-x-4">
           <div className="text-sm font-medium">{selectedGroupsText}</div>

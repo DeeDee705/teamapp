@@ -9,7 +9,7 @@ export default function Home({ onNavigate }: HomeProps) {
   const features = [
     {
       id: 'attendance',
-      title: 'Who\'s Here',
+      title: 'People',
       description: 'Track attendance and manage groups',
       icon: UserCheck,
       screen: 'locations' as AppScreen
