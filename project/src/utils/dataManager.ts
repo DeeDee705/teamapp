@@ -301,6 +301,39 @@ export class DataManager {
     localStorage.setItem(CUSTOM_ATTRIBUTES_KEY, JSON.stringify(this.customAttributes));
   }
 
+  // Selection store helper methods
+  public getLocationById(locationId: string): Location | undefined {
+    return this.locations.find(loc => loc.id === locationId);
+  }
+
+  public getMembersByGroupId(groupId: string): Member[] {
+    const members: Member[] = [];
+    this.locations.forEach(location => {
+      location.members.forEach(member => {
+        if (member.groupId === groupId) {
+          members.push(member);
+        }
+      });
+    });
+    return members;
+  }
+
+  public getMembersByIds(memberIds: string[]): Member[] {
+    const members: Member[] = [];
+    this.locations.forEach(location => {
+      location.members.forEach(member => {
+        if (memberIds.includes(member.id)) {
+          members.push(member);
+        }
+      });
+    });
+    return members;
+  }
+
+  public getPresentMembersByIds(memberIds: string[]): Member[] {
+    return this.getMembersByIds(memberIds).filter(member => member.isPresent);
+  }
+
   // Dangerous action
   public deleteAllMembers(): void {
     this.locations.forEach(location => {

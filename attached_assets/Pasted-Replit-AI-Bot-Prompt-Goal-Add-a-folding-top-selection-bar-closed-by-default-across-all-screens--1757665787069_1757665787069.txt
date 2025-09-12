@@ -1,0 +1,495 @@
+Replit AI Bot Prompt
+
+Goal:
+Add a folding top selection bar (closed by default) across all screens (except “Who’s Here”), fix member editing in “Who’s Here”, rename that section to People, restore/fix Team Generator to respect selections from “Who’s Here”, and upgrade filters to support multiple age ranges and gender modes (mixed vs separated). Also add Random Picker and Coin Toss screens that use the same selection bar.
+
+1) Global, reusable folding selection bar
+
+Create a reusable component: src/components/SelectionBar.tsx
+
+Closed by default. A small top bar with a chevron to expand/collapse.
+
+When open, show three stacked, collapsible panels:
+
+Locations (checkbox list)
+
+Groups (filtered by checked locations, checkbox list)
+
+Members (filtered by checked groups, checkbox list + search)
+
+Support tri-state checkboxes (checked / unchecked / indeterminate) for Locations and Groups.
+
+Selecting/unselecting propagates downward (location → its groups → their members).
+
+Persist selection in a global store (see “Selection store” below).
+
+A “Clear selection” link resets everything quickly.
+
+Where to show it:
+
+Show on Team Generator, Random Picker (new), and Coin Toss (new).
+
+Do not show on “Who’s Here” (People) screen.
+
+The bar is closed by default on every page; clicking the header opens it.
+
+2) Global selection store
+
+Create src/state/selectionStore.ts (Zustand or simple React Context — your choice; Zustand preferred):
+
+// shape
+interface SelectionState {
+  selectedLocationIds: string[];
+  selectedGroupIds: string[];
+  selectedMemberIds: string[];
+  setLocations(ids: string[]): void;
+  setGroups(ids: string[]): void;
+  setMembers(ids: string[]): void;
+  clear(): void;
+}
+
+// Also expose derived selectors:
+getSelectedMembers(): Member[]; // Use DataManager + selected ids
+getPresentSelectedMembers(): Member[]; // filter by isPresent
+
+
+All selection write actions come from the SelectionBar.
+
+All consumers (Team Generator / Random Picker / Coin Toss) only read from this store.
+
+3) Rename “Who’s Here” → People and fix member editing
+
+Rename screen title and nav target to People everywhere.
+
+In People screen:
+
+Ensure Edit Member opens and saves properly (regression fix).
+
+You can add/move members between groups and toggle presence.
+
+Keep “accordion” behavior: open one location → shows its groups; open one group → shows its members. (Others collapse.)
+
+4) Team Generator: respect selection + multi-filters
+
+Remove any location pickers inside Team Generator. It must use the Selection Store:
+
+const pool = selectionStore.getPresentSelectedMembers(); // required source
+if (pool.length === 0) show inline hint: “Open the top bar to select people.”
+
+
+Filters (composable):
+
+Gender:
+
+Mode selector: Mixed (default) OR Separated by gender.
+
+Checkbox filters for allowed genders: Male, Female, Other (multi-select).
+
+Age:
+
+Support multiple age bands. UI: “+ Add age band” → rows with {min, max} and Remove.
+
+Skill:
+
+Range {min, max} (1–5).
+
+Custom rules (if you already added custom attributes earlier): keep support (AND logic).
+
+Saved Filter Sets (optional but great): allow save/apply presets (e.g., “U7–U9 Girls”).
+
+Number of teams honored as before (teamCount / numberOfTeams).
+
+Generation logic:
+
+Build filtered = applyFilters(pool, { genders, ageBands[], skillRange, customRules }).
+
+If Separated by gender:
+
+Split filtered pool into male/female/other sub-pools and generate independently per sub-pool (distribute teamCount proportionally, remainder by largest pool).
+
+Prefix team names with gender label.
+
+If Mixed:
+
+If multiple age bands are defined, treat each band as a group; distribute teamCount proportionally across bands (same remainder logic). Prefix names with band label (e.g., “Age 7–9 • Team 1”).
+
+If no age bands, generate across the whole filtered pool.
+
+Acceptance for Team Generator:
+
+No location UI.
+
+Uses selection store.
+
+Multiple age bands supported.
+
+Gender mixed/separated modes.
+
+Team count is respected.
+
+5) Random Picker & Coin Toss (new screens)
+
+Random Picker (src/components/RandomPicker.tsx):
+
+Uses selection store’s present selected members.
+
+UI: choose how many to pick (N). Button “Pick Random”.
+
+Show picked names with a quick animation; “Pick again” and “Exclude picked” toggle (optional).
+
+Respect filters panel if the selection bar is open (same top bar).
+
+Coin Toss (src/components/CoinToss.tsx):
+
+A big “Toss” button → random Heads/Tails with simple animation.
+
+Optional: allow assigning winners/losers randomly from the current pool (e.g., split pool in half randomly).
+
+Routing/Navigation:
+
+Add entries in nav to Random Picker and Coin Toss.
+
+6) Fix: “No selection” bug
+
+In Team Generator, Random Picker, Coin Toss: reading from the selection store should always work.
+
+If store is empty, show the friendly hint under the (closed) selection bar header:
+“No one selected. Open the bar above to pick locations/groups/members.”
+
+7) Filter helper (upgrade)
+
+Adjust applyFilters to support multiple age bands and gender mode:
+
+function applyFilters(members, { genderAllowed, ageBands, skillRange, customRules }) {
+  const base = members.filter(m => {
+    if (!genderAllowed[m.gender]) return false;
+    // skill + custom rules as before
+    return true;
+  });
+
+  if (!ageBands?.length) return base;
+
+  // return tagged subsets
+  return base.filter(m => {
+    const age = year - m.birthYear;
+    return ageBands.some(b => (b.min ?? -Infinity) <= age && age <= (b.max ?? Infinity));
+  });
+}
+
+
+Also expose a grouping helper:
+
+groupByAgeBands(members, ageBands) → returns { label, key, members[] }[]
+
+8) DataManager quick additions (if missing)
+
+getMembersByIds(memberIds: string[]): Member[]
+
+getPresentMembersByIds(memberIds: string[]): Member[]
+
+Ensure member edit (update name, birthYear, gender, skill) works in People screen.
+
+9) Visual/UX
+
+Selection bar header style: minimal pill with chevron; closed by default; same dark theme.
+
+Inside bar: three collapsible sections with tiny counts:
+Locations (2/5) • Groups (3/12) • Members (18 selected)
+
+Checkboxes update instantly; store writes are synchronous.
+
+Keep performance: only load members for checked groups in Member list to avoid huge DOM.
+
+10) Acceptance criteria (end-to-end)
+
+People screen (formerly Who’s Here) lets me edit members, move between groups, and toggle presence; accordions work.
+
+Selection Bar appears on Team Generator, Random Picker, Coin Toss; closed by default; I can open it and check/uncheck Locations, Groups, Members.
+
+Team Generator:
+
+Uses the selection store’s present members.
+
+Supports Multiple Age Bands, Skill range, and Gender Mixed / Separated.
+
+Team count is respected; names prefixed with band/gender labels when grouped.
+
+Random Picker and Coin Toss work off the same selection.
+
+No TypeScript or runtime errors; state persists as it does elsewhere.
+
+💡 Architecture Advice (short + practical)
+
+You’ve got two overlapping needs:
+
+On-field quick actions
+
+Mark presence, pick random, coin toss, fast team generation with simple controls.
+
+Needs: speed, minimal taps, one clear selection source.
+
+Coach/club operations
+
+Manage locations, fixed groups, members, attributes, scheduling/fields.
+
+Needs: structure, edit forms, persistence, sometimes more UI.
+
+Recommendation: separate concerns, share selection.
+
+People (admin/ops): where you edit members, groups, locations (no selection bar).
+
+Activities (field):
+
+Team Generator
+
+Random Picker
+
+Coin Toss
+
+(Later) Field Assignment / Scheduler
+All Activities use the same folding Selection Bar at the top for “Who participates now?”
+
+Why this is clean:
+
+A single Selection Store becomes the “who’s in right now” truth for all Activities.
+
+Admin edits don’t interfere with fast on-field actions.
+
+You can add more Activities later (e.g., “Assign to Fields”) without touching People.
+
+Data model sketch:
+
+Location { id, name, groups[], members[] }
+
+Group { id, name }
+
+Member { id, name, birthYear, gender, skillLevel, isPresent, groupId, attrs? }
+
+SelectionState { locationIds[], groupIds[], memberIds[] } (ephemeral)
+
+Optional: Session { id, at, selectedIds, generatedTeams, notes } if you want history.
+
+Future-proofing:
+
+If you grow into “assign teams to fields/time slots,” add a separate Schedule feature under Activities that reads the same selection store (or a saved snapshot of it).
+
+If you want, I can also draft the SelectionBar.tsx skeleton (ready-to-paste) and the state store so you can drop them in and wire the Team Generator, Random Picker, and Coin Toss quickly.
+
+You said:
+the random picker and coin toss are not new they are already there
+ChatGPT said:
+
+Got it 👍 thanks for clarifying — so Random Picker and Coin Toss already exist, they just need to work with the same folding selection bar instead of their own selection logic. That actually makes things simpler.
+
+Here’s an updated version of the plan + a prompt you can drop into Replit’s AI Bot.
+
+🔧 Replit AI Bot Prompt (updated)
+
+Goal:
+Unify all selection across the app into a folding top bar (closed by default) that lets me check/uncheck locations, groups, and members.
+
+Apply this to Team Generator, Random Picker, and Coin Toss.
+
+In People (formerly Who’s Here), keep the accordion for editing, not the top bar.
+
+Fix editing in People.
+
+Fix Team Generator not recognizing selections.
+
+Upgrade filters: multiple age ranges, gender = mixed/separated.
+
+1) Global Selection Bar
+
+Component: src/components/SelectionBar.tsx
+
+Closed by default, toggle open with a chevron.
+
+Contains 3 collapsible lists:
+
+Locations (checkboxes)
+
+Groups (filtered by checked locations)
+
+Members (filtered by checked groups, checkbox + search)
+
+Supports select all / deselect all at each level.
+
+Updates a global selection store.
+
+Add a “Clear All” link.
+
+Shown in:
+
+Team Generator
+
+Random Picker
+
+Coin Toss
+
+Not shown in:
+
+People (edit-only screen).
+
+2) Selection Store
+
+New file: src/state/selectionStore.ts (Zustand or React Context).
+
+interface SelectionState {
+  selectedLocationIds: string[];
+  selectedGroupIds: string[];
+  selectedMemberIds: string[];
+  setLocations(ids: string[]): void;
+  setGroups(ids: string[]): void;
+  setMembers(ids: string[]): void;
+  clear(): void;
+
+  // derived
+  getSelectedMembers(): Member[];
+  getPresentSelectedMembers(): Member[];
+}
+
+
+All 3 features (Team Generator, Random Picker, Coin Toss) read from here.
+
+If no selection, show hint: “No one selected. Open the bar above to pick people.”
+
+3) People Screen
+
+Rename section from Who’s Here → People (simpler).
+
+Keep accordion logic (location → groups → members).
+
+Fix Edit Member (currently not working):
+
+Can change name, birthYear, gender, skillLevel.
+
+Can move member to another group.
+
+Save updates DataManager and refresh local state.
+
+Presence toggles remain here.
+
+4) Team Generator
+
+Remove location pickers inside this component.
+
+Use selectionStore.getPresentSelectedMembers() as pool.
+
+Add multi-filters:
+
+Gender:
+
+Mode = Mixed (default) or Separated.
+
+Gender checkboxes: Male, Female, Other.
+
+Age: support multiple age bands (add/remove rows {min, max}).
+
+Skill: min/max.
+
+Generate logic:
+
+If separated by gender: generate sub-teams per gender.
+
+If multiple age bands: generate per band, proportionally.
+
+Else: generate one set over all.
+
+Team count must be respected.
+
+5) Random Picker & Coin Toss
+
+Replace their current selection logic with the selection store.
+
+Random Picker: pick from getPresentSelectedMembers().
+
+Coin Toss: works on same pool (optionally split them randomly if >1).
+
+6) Filters helper
+
+Upgrade applyFilters:
+
+function applyFilters(members, { genders, ageBands, skillRange, customRules }) {
+  // gender filter
+  let pool = members.filter(m => genders[m.gender]);
+
+  // skill
+  if (skillRange.min) pool = pool.filter(m => m.skillLevel >= skillRange.min);
+  if (skillRange.max) pool = pool.filter(m => m.skillLevel <= skillRange.max);
+
+  // age bands
+  if (ageBands?.length) {
+    const year = new Date().getFullYear();
+    pool = pool.filter(m => {
+      const age = year - m.birthYear;
+      return ageBands.some(b => (b.min ?? -Infinity) <= age && age <= (b.max ?? Infinity));
+    });
+  }
+
+  // custom rules (if implemented earlier)
+  return pool;
+}
+
+7) Acceptance Criteria
+
+People screen (accordion):
+
+Can edit member details and move between groups.
+
+Presence toggle works.
+
+Selection Bar:
+
+Closed by default.
+
+Open → can check/uncheck locations, groups, members.
+
+Works in Team Generator, Random Picker, Coin Toss.
+
+Team Generator:
+
+Uses selected, present members.
+
+Multi-age bands supported.
+
+Gender Mixed / Separated supported.
+
+Skill range supported.
+
+Random Picker and Coin Toss:
+
+Both use the same global selection.
+
+Show hint if no one selected.
+
+✅ Deliver:
+
+New SelectionBar.tsx
+
+New selectionStore.ts
+
+Updated People.tsx (fix edit + rename)
+
+Updated TeamGenerator.tsx (remove location picker + add multi-filters)
+
+Updated RandomPicker.tsx and CoinToss.tsx (read from selection store)
+
+💡 Architecture Advice
+
+You’re seeing two overlapping roles emerge:
+
+Field Mode (fast actions):
+
+Needs speed, minimal UI.
+
+Use Selection Bar + activities (Team Generator, Random Picker, Coin Toss).
+
+Goal: “Who’s in now?” → do something with them immediately.
+
+Management Mode (People):
+
+Manage members, groups, locations, attributes.
+
+More structured editing.
+
+Not used in-the-moment on the field.
