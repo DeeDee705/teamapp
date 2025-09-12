@@ -1,0 +1,461 @@
+1) src/state/selectionStore.ts
+// src/state/selectionStore.ts
+import React, { createContext, useContext, useMemo, useReducer } from 'react';
+import type { Location, Member } from '../types';
+import { DataManager } from '../utils/dataManager';
+
+type Id = string;
+
+interface SelectionState {
+  selectedLocationIds: Id[];
+  selectedGroupIds: Id[];
+  selectedMemberIds: Id[];
+}
+
+type Action =
+  | { type: 'SET_LOCATIONS'; ids: Id[] }
+  | { type: 'SET_GROUPS'; ids: Id[] }
+  | { type: 'SET_MEMBERS'; ids: Id[] }
+  | { type: 'CLEAR' };
+
+const initialState: SelectionState = {
+  selectedLocationIds: [],
+  selectedGroupIds: [],
+  selectedMemberIds: [],
+};
+
+function uniq<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
+}
+
+function reducer(state: SelectionState, action: Action): SelectionState {
+  switch (action.type) {
+    case 'SET_LOCATIONS':
+      return { ...state, selectedLocationIds: uniq(action.ids) };
+    case 'SET_GROUPS':
+      return { ...state, selectedGroupIds: uniq(action.ids) };
+    case 'SET_MEMBERS':
+      return { ...state, selectedMemberIds: uniq(action.ids) };
+    case 'CLEAR':
+      return initialState;
+    default:
+      return state;
+  }
+}
+
+interface SelectionContextValue extends SelectionState {
+  setLocations: (ids: Id[]) => void;
+  setGroups: (ids: Id[]) => void;
+  setMembers: (ids: Id[]) => void;
+  clear: () => void;
+
+  // helpers (require DataManager)
+  getSelectedMembers: () => Member[];
+  getPresentSelectedMembers: () => Member[];
+}
+
+const SelectionContext = createContext<SelectionContextValue | null>(null);
+
+export const SelectionProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const dataManager = DataManager.getInstance();
+
+  const value: SelectionContextValue = useMemo(() => {
+    const setLocations = (ids: Id[]) => dispatch({ type: 'SET_LOCATIONS', ids });
+    const setGroups = (ids: Id[]) => dispatch({ type: 'SET_GROUPS', ids });
+    const setMembers = (ids: Id[]) => dispatch({ type: 'SET_MEMBERS', ids });
+    const clear = () => dispatch({ type: 'CLEAR' });
+
+    const getSelectedMembers = (): Member[] => {
+      // If memberIds are explicitly selected, trust that first.
+      if (state.selectedMemberIds.length) {
+        return dataManager.getMembersByIds(state.selectedMemberIds);
+      }
+
+      // Else, derive from selected groups/locations.
+      const locations = dataManager.getLocations();
+      const groupSet = new Set(state.selectedGroupIds);
+      const locSet = new Set(state.selectedLocationIds);
+
+      const pool: Member[] = [];
+      locations.forEach((loc) => {
+        const includeLocation = locSet.has(loc.id) || state.selectedLocationIds.length === 0;
+        if (!includeLocation) return;
+
+        const allGroupsSelected = state.selectedGroupIds.length === 0;
+        const groupIdsInLoc = loc.groups?.map((g) => g.id) ?? [];
+
+        const selectedGroupsHere = allGroupsSelected
+          ? groupIdsInLoc
+          : groupIdsInLoc.filter((gid) => groupSet.has(gid));
+
+        const membersFromGroups = loc.members.filter((m) =>
+          selectedGroupsHere.includes(m.groupId ?? '')
+        );
+
+        // Also include unassigned if no groups are selected for this location.
+        const unassigned = loc.members.filter((m) => !m.groupId);
+        const add = allGroupsSelected ? uniq([...membersFromGroups, ...unassigned]) : membersFromGroups;
+
+        pool.push(...add);
+      });
+
+      return uniq(pool);
+    };
+
+    const getPresentSelectedMembers = (): Member[] =>
+      getSelectedMembers().filter((m) => m.isPresent);
+
+    return {
+      ...state,
+      setLocations,
+      setGroups,
+      setMembers,
+      clear,
+      getSelectedMembers,
+      getPresentSelectedMembers,
+    };
+  }, [state, dataManager]);
+
+  return <SelectionContext.Provider value={value}>{children}</SelectionContext.Provider>;
+};
+
+export function useSelection() {
+  const ctx = useContext(SelectionContext);
+  if (!ctx) throw new Error('useSelection must be used within SelectionProvider');
+  return ctx;
+}
+
+2) src/components/SelectionBar.tsx
+// src/components/SelectionBar.tsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useSelection } from '../state/selectionStore';
+import type { Location, Member } from '../types';
+import { DataManager } from '../utils/dataManager';
+
+type Id = string;
+
+const SectionHeader: React.FC<{
+  title: string;
+  countText?: string;
+  isOpen: boolean;
+  onToggle: () => void;
+}> = ({ title, countText, isOpen, onToggle }) => (
+  <button
+    onClick={onToggle}
+    className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#1a1a1a] hover:bg-[#222] transition-colors"
+  >
+    <div className="flex items-center space-x-2">
+      {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+      <span className="font-medium">{title}</span>
+    </div>
+    {countText ? <span className="text-xs opacity-70">{countText}</span> : null}
+  </button>
+);
+
+export const SelectionBar: React.FC = () => {
+  const dm = DataManager.getInstance();
+  const {
+    selectedLocationIds,
+    selectedGroupIds,
+    selectedMemberIds,
+    setLocations,
+    setGroups,
+    setMembers,
+    clear,
+  } = useSelection();
+
+  const [allLocations, setAllLocations] = useState<Location[]>([]);
+  const [open, setOpen] = useState(false);
+  const [openLocs, setOpenLocs] = useState(false);
+  const [openGroups, setOpenGroups] = useState(false);
+  const [openMembers, setOpenMembers] = useState(false);
+  const [memberQuery, setMemberQuery] = useState('');
+
+  useEffect(() => {
+    setAllLocations(dm.getLocations());
+  }, [dm]);
+
+  // Derived data
+  const allGroups = useMemo(() => {
+    const result: { id: Id; name: string; locationId: Id }[] = [];
+    allLocations.forEach((loc) => {
+      (loc.groups ?? []).forEach((g) => result.push({ id: g.id, name: g.name, locationId: loc.id }));
+    });
+    return result;
+  }, [allLocations]);
+
+  const allMembers = useMemo<Member[]>(() => {
+    const result: Member[] = [];
+    allLocations.forEach((loc) => result.push(...loc.members));
+    return result;
+  }, [allLocations]);
+
+  // Filters based on chosen locations/groups
+  const visibleGroups = useMemo(() => {
+    if (!selectedLocationIds.length) return allGroups;
+    const set = new Set(selectedLocationIds);
+    return allGroups.filter((g) => set.has(g.locationId));
+  }, [allGroups, selectedLocationIds]);
+
+  const visibleMembers = useMemo(() => {
+    const groupSet = new Set(selectedGroupIds);
+    const locSet = new Set(selectedLocationIds);
+    const filtered = allMembers.filter((m) => {
+      const loc = allLocations.find((l) => l.members.some((x) => x.id === m.id));
+      const inSelectedLoc = !loc || locSet.size === 0 || locSet.has(loc.id);
+      const inSelectedGroup =
+        groupSet.size === 0 || (m.groupId ? groupSet.has(m.groupId) : true); // include unassigned
+      return inSelectedLoc && inSelectedGroup;
+    });
+    const q = memberQuery.trim().toLowerCase();
+    return q ? filtered.filter((m) => m.name.toLowerCase().includes(q)) : filtered;
+  }, [allMembers, allLocations, selectedGroupIds, selectedLocationIds, memberQuery]);
+
+  // Bulk toggles
+  const toggleAllLocations = (checked: boolean) => {
+    setLocations(checked ? allLocations.map((l) => l.id) : []);
+  };
+  const toggleAllGroups = (checked: boolean) => {
+    setGroups(checked ? visibleGroups.map((g) => g.id) : []);
+  };
+  const toggleAllMembers = (checked: boolean) => {
+    setMembers(checked ? visibleMembers.map((m) => m.id) : []);
+  };
+
+  // Tri-state helpers
+  const isAll = (selected: Id[], total: number) => selected.length > 0 && selected.length === total;
+  const isInd = (selected: Id[], total: number) => selected.length > 0 && selected.length < total;
+
+  const totalLocs = allLocations.length;
+  const totalGroups = visibleGroups.length;
+  const totalMembers = visibleMembers.length;
+
+  return (
+    <div className="mb-4">
+      {/* Top toggle pill */}
+      <div className="flex items-center justify-between bg-[#0f0f0f] rounded-xl px-3 py-2 border border-[#2a2a2a]">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center space-x-2 font-medium"
+        >
+          {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          <span>Selection</span>
+        </button>
+        <div className="text-xs opacity-70">
+          {selectedMemberIds.length} members • {selectedGroupIds.length} groups • {selectedLocationIds.length} locations
+        </div>
+      </div>
+
+      {!open ? null : (
+        <div className="mt-3 space-y-3">
+          {/* Locations */}
+          <SectionHeader
+            title="Locations"
+            isOpen={openLocs}
+            onToggle={() => setOpenLocs((v) => !v)}
+            countText={`${selectedLocationIds.length}/${totalLocs}`}
+          />
+          {openLocs && (
+            <div className="rounded-lg bg-[#141414] p-3 space-y-2 border border-[#2a2a2a]">
+              <div className="flex items-center justify-between text-sm">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={isAll(selectedLocationIds, totalLocs)}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isInd(selectedLocationIds, totalLocs);
+                    }}
+                    onChange={(e) => toggleAllLocations(e.target.checked)}
+                  />
+                  <span>Select all</span>
+                </label>
+                <button onClick={() => setLocations([])} className="opacity-70 hover:opacity-100">
+                  Clear
+                </button>
+              </div>
+              <div className="grid gap-2">
+                {allLocations.map((loc) => {
+                  const checked = selectedLocationIds.includes(loc.id);
+                  return (
+                    <label key={loc.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const set = new Set(selectedLocationIds);
+                          e.target.checked ? set.add(loc.id) : set.delete(loc.id);
+                          setLocations(Array.from(set));
+                        }}
+                      />
+                      <span>{loc.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Groups */}
+          <SectionHeader
+            title="Groups"
+            isOpen={openGroups}
+            onToggle={() => setOpenGroups((v) => !v)}
+            countText={`${selectedGroupIds.length}/${totalGroups}`}
+          />
+          {openGroups && (
+            <div className="rounded-lg bg-[#141414] p-3 space-y-2 border border-[#2a2a2a]">
+              <div className="flex items-center justify-between text-sm">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={isAll(selectedGroupIds, totalGroups)}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isInd(selectedGroupIds, totalGroups);
+                    }}
+                    onChange={(e) => toggleAllGroups(e.target.checked)}
+                  />
+                  <span>Select all (filtered by locations)</span>
+                </label>
+                <button onClick={() => setGroups([])} className="opacity-70 hover:opacity-100">
+                  Clear
+                </button>
+              </div>
+              <div className="grid gap-2">
+                {visibleGroups.map((g) => {
+                  const checked = selectedGroupIds.includes(g.id);
+                  return (
+                    <label key={g.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const set = new Set(selectedGroupIds);
+                          e.target.checked ? set.add(g.id) : set.delete(g.id);
+                          setGroups(Array.from(set));
+                        }}
+                      />
+                      <span>{g.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Members */}
+          <SectionHeader
+            title="Members"
+            isOpen={openMembers}
+            onToggle={() => setOpenMembers((v) => !v)}
+            countText={`${selectedMemberIds.length}/${totalMembers}`}
+          />
+          {openMembers && (
+            <div className="rounded-lg bg-[#141414] p-3 space-y-3 border border-[#2a2a2a]">
+              <div className="flex items-center justify-between text-sm">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={isAll(selectedMemberIds, totalMembers)}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isInd(selectedMemberIds, totalMembers);
+                    }}
+                    onChange={(e) => toggleAllMembers(e.target.checked)}
+                  />
+                  <span>Select all (filtered by locations & groups)</span>
+                </label>
+                <button onClick={() => setMembers([])} className="opacity-70 hover:opacity-100">
+                  Clear
+                </button>
+              </div>
+
+              <input
+                className="w-full bg-[#1f1f1f] border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
+                placeholder="Search members…"
+                value={memberQuery}
+                onChange={(e) => setMemberQuery(e.target.value)}
+              />
+
+              <div className="grid gap-2 max-h-64 overflow-auto pr-1">
+                {visibleMembers.map((m) => {
+                  const checked = selectedMemberIds.includes(m.id);
+                  return (
+                    <label key={m.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const set = new Set(selectedMemberIds);
+                          e.target.checked ? set.add(m.id) : set.delete(m.id);
+                          setMembers(Array.from(set));
+                        }}
+                      />
+                      <span className="truncate">{m.name}</span>
+                    </label>
+                  );
+                })}
+                {visibleMembers.length === 0 && (
+                  <div className="text-xs opacity-60">No members found.</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Footer actions */}
+          <div className="flex items-center justify-between text-xs opacity-80">
+            <button onClick={clear} className="hover:opacity-100">
+              Clear selection
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+3) How to integrate (quick)
+
+Wrap your app with the provider in src/App.tsx (or the root where you render screens):
+
+import { SelectionProvider } from './state/selectionStore';
+
+export default function App() {
+  return (
+    <SelectionProvider>
+      {/* your routes/screens here */}
+    </SelectionProvider>
+  );
+}
+
+
+Show the SelectionBar at the top of these screens:
+
+TeamGenerator.tsx
+
+RandomPicker.tsx
+
+CoinToss.tsx
+
+import { SelectionBar } from '../components/SelectionBar';
+import { useSelection } from '../state/selectionStore';
+import { DataManager } from '../utils/dataManager';
+
+export default function TeamGenerator() {
+  const { getPresentSelectedMembers } = useSelection();
+  const pool = getPresentSelectedMembers(); // <- unified source
+
+  return (
+    <div className="p-4">
+      <SelectionBar />   {/* folding top bar */}
+      {/* ...rest of Team Generator UI; use "pool" as your input */}
+    </div>
+  );
+}
+
+
+Fix “no selection” message in Team Generator
+If pool.length === 0, show: “Open the Selection bar above to choose locations, groups, or members.”
+
+Random Picker / Coin Toss
+Read the same pool from useSelection() so all three features behave identically.
