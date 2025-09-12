@@ -22,7 +22,17 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
   const [genderFilter, setGenderFilter] = useState<Record<Gender, boolean>>({
     Male: true, Female: true, Other: true
   });
-  const [ageRange, setAgeRange] = useState<{ min?: number; max?: number }>({});
+  // Age bands - predefined ranges users can select multiple of
+  const AGE_BANDS = [
+    { id: 'kids', label: 'Kids (8-12)', min: 8, max: 12 },
+    { id: 'teens', label: 'Teens (13-17)', min: 13, max: 17 },
+    { id: 'young-adults', label: 'Young Adults (18-25)', min: 18, max: 25 },
+    { id: 'adults', label: 'Adults (26-35)', min: 26, max: 35 },
+    { id: 'seniors', label: 'Seniors (36+)', min: 36, max: 100 }
+  ];
+  
+  const [selectedAgeBands, setSelectedAgeBands] = useState<string[]>([]);
+  const [genderMode, setGenderMode] = useState<'mixed' | 'separated'>('mixed');
   const [skillRange, setSkillRange] = useState<{ min?: number; max?: number }>({});
   const [customAttributes, setCustomAttributes] = useState<CustomAttribute[]>([]);
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
@@ -44,15 +54,8 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
   const selectedMemberIds = useSelectionStore(state => state.selectedMemberIds);
   
   // Helper function to save filters when persistFilters is enabled
-  const saveFiltersToStorage = () => {
+  const saveFiltersToStorage = (filtersToSave: any) => {
     if (settings.persistFilters) {
-      const filtersToSave = {
-        genderFilter,
-        ageRange,
-        skillRange,
-        customRules,
-        numberOfTeams: generationOptions.numberOfTeams
-      };
       localStorage.setItem('team-generator-filters', JSON.stringify(filtersToSave));
     }
   };
@@ -68,7 +71,23 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
         try {
           const parsed = JSON.parse(savedFilters);
           if (parsed.genderFilter) setGenderFilter(parsed.genderFilter);
-          if (parsed.ageRange) setAgeRange(parsed.ageRange);
+          
+          // Backward compatibility: Convert old ageRange to selectedAgeBands
+          if (parsed.selectedAgeBands) {
+            setSelectedAgeBands(parsed.selectedAgeBands);
+          } else if (parsed.ageRange) {
+            // Map old age range to appropriate age bands
+            const matchingBands = AGE_BANDS.filter(band => {
+              const rangeOverlaps = (
+                (parsed.ageRange.min == null || band.max >= parsed.ageRange.min) &&
+                (parsed.ageRange.max == null || band.min <= parsed.ageRange.max)
+              );
+              return rangeOverlaps;
+            }).map(band => band.id);
+            setSelectedAgeBands(matchingBands);
+          }
+          
+          if (parsed.genderMode) setGenderMode(parsed.genderMode);
           if (parsed.skillRange) setSkillRange(parsed.skillRange);
           if (parsed.customRules) setCustomRules(parsed.customRules);
           if (parsed.numberOfTeams) {
@@ -87,26 +106,61 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
     setAttendancePool(pool);
   }, [selectedMemberIds, dataManager]);
 
+  // Auto-save filters when they change
+  useEffect(() => {
+    const filtersToSave = {
+      genderFilter,
+      selectedAgeBands,
+      genderMode,
+      skillRange,
+      customRules,
+      numberOfTeams: generationOptions.numberOfTeams
+    };
+    saveFiltersToStorage(filtersToSave);
+  }, [genderFilter, selectedAgeBands, genderMode, skillRange, customRules, generationOptions.numberOfTeams, settings.persistFilters]);
+
   // Apply filters whenever filters or pool changes
   useEffect(() => {
-    const filtered = applyFilters(attendancePool, { genderFilter, ageRange, skillRange, customRules });
+    // Convert age bands to age ranges for filtering
+    const ageRanges = selectedAgeBands.length > 0 
+      ? selectedAgeBands.map(bandId => AGE_BANDS.find(b => b.id === bandId)!).filter(Boolean)
+      : [];
+    
+    const filtered = applyFilters(attendancePool, { 
+      genderFilter, 
+      ageBands: ageRanges,
+      skillRange, 
+      customRules 
+    });
     setFilteredMembers(filtered);
     
-    // Auto-adjust number of teams based on available members
+    // Auto-adjust number of teams based on available members and gender mode
     const divisor = settings.teamClampRule === 'conservative' ? 2 : 1;
-    const maxTeams = Math.max(2, Math.min(8, Math.floor(filtered.length / divisor)));
-    if (generationOptions.numberOfTeams > maxTeams) {
-      setGenerationOptions(prev => ({ ...prev, numberOfTeams: maxTeams }));
+    const minTeamsNeeded = genderMode === 'separated' 
+      ? Object.keys(filtered.reduce((acc, member) => {
+          if (!acc[member.gender]) acc[member.gender] = [];
+          acc[member.gender].push(member);
+          return acc;
+        }, {} as Record<string, Member[]>)).filter(gender => filtered.some(m => m.gender === gender)).length
+      : 2;
+    const baseMax = Math.max(2, Math.min(8, Math.floor(filtered.length / divisor)));
+    const adjustedMin = Math.max(2, minTeamsNeeded);
+    const adjustedMax = Math.max(adjustedMin, baseMax);
+    
+    // Clamp numberOfTeams to valid range [adjustedMin, adjustedMax]
+    if (generationOptions.numberOfTeams < adjustedMin || generationOptions.numberOfTeams > adjustedMax) {
+      const clampedValue = Math.max(adjustedMin, Math.min(adjustedMax, generationOptions.numberOfTeams));
+      setGenerationOptions(prev => ({ ...prev, numberOfTeams: clampedValue }));
     }
-  }, [attendancePool, genderFilter, ageRange, skillRange, customRules, generationOptions.numberOfTeams, settings.teamClampRule]);
+  }, [attendancePool, genderFilter, selectedAgeBands, skillRange, customRules, generationOptions.numberOfTeams, settings.teamClampRule, genderMode]);
 
   // Filter manipulation functions
   const resetFilters = () => {
     setGenderFilter({ Male: true, Female: true, Other: true });
-    setAgeRange({});
+    setSelectedAgeBands([]);
+    setGenderMode('mixed');
     setSkillRange({});
     setCustomRules([]);
-    saveFiltersToStorage();
   };
 
   const addCustomRule = () => {
@@ -136,27 +190,23 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
     return { active, isPartial: active.length < all.length && active.length > 0 };
   };
 
-  const hasActiveAgeFilter = () => ageRange.min !== undefined || ageRange.max !== undefined;
+  const hasActiveAgeFilter = () => selectedAgeBands.length > 0;
   const hasActiveSkillFilter = () => skillRange.min !== undefined || skillRange.max !== undefined;
 
   const removeGenderFilter = () => {
     setGenderFilter({ Male: true, Female: true, Other: true });
-    saveFiltersToStorage();
   };
 
   const removeAgeFilter = () => {
-    setAgeRange({});
-    saveFiltersToStorage();
+    setSelectedAgeBands([]);
   };
 
   const removeSkillFilter = () => {
     setSkillRange({});
-    saveFiltersToStorage();
   };
 
   const removeAllCustomRules = () => {
     setCustomRules([]);
-    saveFiltersToStorage();
   };
 
   // Check if any filters are active
@@ -173,7 +223,98 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
     // Add a small delay for better UX
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    const newTeams = TeamBalancer.generateTeams(filteredMembers, generationOptions);
+    let newTeams;
+    
+    if (genderMode === 'separated') {
+      // Separate members by gender and generate teams for each group
+      const membersByGender = filteredMembers.reduce((acc, member) => {
+        if (!acc[member.gender]) acc[member.gender] = [];
+        acc[member.gender].push(member);
+        return acc;
+      }, {} as Record<string, Member[]>);
+      
+      const genderEntries = Object.entries(membersByGender).filter(([_, members]) => members.length > 0);
+      const totalMembers = filteredMembers.length;
+      
+      // Check if we can honor the exact request (need at least 1 team per gender)
+      const minTeamsNeeded = genderEntries.length;
+      const requestedTeams = generationOptions.numberOfTeams;
+      
+      if (requestedTeams < minTeamsNeeded) {
+        // Block generation - cannot have fewer teams than genders in separated mode
+        alert(`Cannot generate ${requestedTeams} teams when separating by gender. Need at least ${minTeamsNeeded} teams (one per gender).`);
+        setIsGenerating(false);
+        return;
+      }
+      
+      // Min-1 seeding: Give each gender 1 team, then distribute the rest
+      const genderAllocations = genderEntries.map(([gender, members]) => ({
+        gender,
+        members,
+        finalAllocation: 1 // Start with 1 team per gender
+      }));
+      
+      // Distribute remaining teams using largest-remainder method
+      const remainingTeams = requestedTeams - minTeamsNeeded;
+      
+      if (remainingTeams > 0) {
+        const remainderData = genderEntries.map(([gender, members]) => {
+          const proportion = members.length / totalMembers;
+          const exactAllocation = proportion * remainingTeams;
+          const baseAllocation = Math.floor(exactAllocation);
+          const remainder = exactAllocation - baseAllocation;
+          return { gender, baseAllocation, remainder };
+        });
+        
+        // Add base allocations to each gender
+        genderAllocations.forEach(allocation => {
+          const data = remainderData.find(d => d.gender === allocation.gender);
+          allocation.finalAllocation += data?.baseAllocation || 0;
+        });
+        
+        // Distribute remaining teams to genders with largest remainders
+        const totalBaseAllocated = remainderData.reduce((sum, d) => sum + d.baseAllocation, 0);
+        const leftover = remainingTeams - totalBaseAllocated;
+        
+        if (leftover > 0) {
+          const sortedByRemainder = remainderData.slice().sort((a, b) => b.remainder - a.remainder);
+          for (let i = 0; i < leftover && i < sortedByRemainder.length; i++) {
+            const allocation = genderAllocations.find(a => a.gender === sortedByRemainder[i].gender);
+            if (allocation) allocation.finalAllocation += 1;
+          }
+        }
+      }
+      
+      // Verify allocation sums to exactly the requested team count
+      const verifyTotal = genderAllocations.reduce((sum, allocation) => sum + allocation.finalAllocation, 0);
+      if (verifyTotal !== requestedTeams) {
+        console.error(`Team allocation error: expected ${requestedTeams}, got ${verifyTotal}`);
+      }
+      
+      // Generate teams for each gender using their exact allocation
+      const allGenderTeams = [];
+      
+      genderAllocations.forEach(({ gender, members, finalAllocation }) => {
+        // Use TeamBalancer for all cases (removes singleton special case)
+        const genderTeams = TeamBalancer.generateTeams(members, {
+          ...generationOptions,
+          // Override conflicting settings for gender separation
+          type: genderMode === 'separated' ? 'balanced' : generationOptions.type,
+          numberOfTeams: finalAllocation
+        });
+        // Add gender prefix to team names
+        genderTeams.forEach(team => {
+          team.name = `${gender} ${team.name}`;
+        });
+        allGenderTeams.push(...genderTeams);
+      });
+      
+      newTeams = allGenderTeams;
+    } else {
+      // Mixed teams (default)
+      newTeams = TeamBalancer.generateTeams(filteredMembers, generationOptions);
+    }
+    
     setTeams(newTeams);
     setIsGenerating(false);
   };
@@ -251,9 +392,42 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
         {/* Filter Sections */}
         {showFilters && (
           <div className="bg-[#1a1a1a] rounded-xl p-4 space-y-4">
+            {/* Gender Mode Selection */}
+            <div>
+              <label className="block text-sm font-medium mb-2">Team Gender Composition</label>
+              <div className="flex space-x-4">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="genderMode"
+                    value="mixed"
+                    checked={genderMode === 'mixed'}
+                    onChange={(e) => {
+                      setGenderMode('mixed');
+                    }}
+                    className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 focus:ring-[#f2e205]"
+                  />
+                  <span className="text-sm">Mixed Teams</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="genderMode"
+                    value="separated"
+                    checked={genderMode === 'separated'}
+                    onChange={(e) => {
+                      setGenderMode('separated');
+                    }}
+                    className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 focus:ring-[#f2e205]"
+                  />
+                  <span className="text-sm">Gender Separated Teams</span>
+                </label>
+              </div>
+            </div>
+
             {/* Gender Filter */}
             <div>
-              <label className="block text-sm font-medium mb-2">Gender</label>
+              <label className="block text-sm font-medium mb-2">Gender Filter</label>
               <div className="flex flex-wrap gap-2">
                 {(Object.keys(genderFilter) as Gender[]).map(gender => (
                   <label key={gender} className="flex items-center space-x-2 cursor-pointer">
@@ -262,7 +436,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                       checked={genderFilter[gender]}
                       onChange={(e) => {
                         setGenderFilter(prev => ({ ...prev, [gender]: e.target.checked }));
-                        saveFiltersToStorage();
                       }}
                       className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 rounded focus:ring-[#f2e205]"
                     />
@@ -272,30 +445,27 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
               </div>
             </div>
 
-            {/* Age Range Filter */}
+            {/* Age Bands Filter */}
             <div>
-              <label className="block text-sm font-medium mb-2">Age Range</label>
-              <div className="flex space-x-2">
-                <input
-                  type="number"
-                  placeholder="Min age"
-                  value={ageRange.min || ''}
-                  onChange={(e) => {
-                    setAgeRange(prev => ({ ...prev, min: parseInt(e.target.value) || undefined }));
-                    saveFiltersToStorage();
-                  }}
-                  className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
-                />
-                <input
-                  type="number"
-                  placeholder="Max age"
-                  value={ageRange.max || ''}
-                  onChange={(e) => {
-                    setAgeRange(prev => ({ ...prev, max: parseInt(e.target.value) || undefined }));
-                    saveFiltersToStorage();
-                  }}
-                  className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
-                />
+              <label className="block text-sm font-medium mb-2">Age Groups</label>
+              <div className="grid grid-cols-2 gap-2">
+                {AGE_BANDS.map(band => (
+                  <label key={band.id} className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedAgeBands.includes(band.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedAgeBands(prev => [...prev, band.id]);
+                        } else {
+                          setSelectedAgeBands(prev => prev.filter(id => id !== band.id));
+                        }
+                      }}
+                      className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 rounded focus:ring-[#f2e205]"
+                    />
+                    <span className="text-sm">{band.label}</span>
+                  </label>
+                ))}
               </div>
             </div>
 
@@ -307,7 +477,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                   value={skillRange.min || ''}
                   onChange={(e) => {
                     setSkillRange(prev => ({ ...prev, min: parseInt(e.target.value) || undefined }));
-                    saveFiltersToStorage();
                   }}
                   className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                 >
@@ -320,7 +489,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                   value={skillRange.max || ''}
                   onChange={(e) => {
                     setSkillRange(prev => ({ ...prev, max: parseInt(e.target.value) || undefined }));
-                    saveFiltersToStorage();
                   }}
                   className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                 >
@@ -350,7 +518,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                       value={rule.key}
                       onChange={(e) => {
                         updateCustomRule(index, { key: e.target.value });
-                        saveFiltersToStorage();
                       }}
                       className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                     >
@@ -362,7 +529,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                       value={rule.op}
                       onChange={(e) => {
                         updateCustomRule(index, { op: e.target.value as CustomRule['op'] });
-                        saveFiltersToStorage();
                       }}
                       className="bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                     >
@@ -376,7 +542,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                       value={rule.value}
                       onChange={(e) => {
                         updateCustomRule(index, { value: e.target.value });
-                        saveFiltersToStorage();
                       }}
                       className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                       placeholder="Value"
@@ -384,7 +549,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                     <button
                       onClick={() => {
                         removeCustomRule(index);
-                        saveFiltersToStorage();
                       }}
                       className="p-2 hover:bg-[#2a2a2a] rounded transition-colors"
                     >
@@ -413,7 +577,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                     type: e.target.value as TeamGenerationOptions['type']
                   };
                   setGenerationOptions(newOptions);
-                  saveFiltersToStorage();
                 }}
                 className="w-full bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-4 py-3 focus:outline-none focus:border-[#f2e205]"
               >
@@ -430,25 +593,46 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
               <label className="block text-sm font-medium mb-2">
                 Number of Teams: {generationOptions.numberOfTeams}
               </label>
-              <input
-                type="range"
-                min="2"
-                max={Math.max(2, Math.min(8, Math.floor(filteredMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}
-                value={generationOptions.numberOfTeams}
-                onChange={(e) => {
-                  const newOptions = { 
-                    ...generationOptions, 
-                    numberOfTeams: parseInt(e.target.value)
-                  };
-                  setGenerationOptions(newOptions);
-                  saveFiltersToStorage();
-                }}
-                className="w-full h-2 bg-[#2a2a2a] rounded-lg appearance-none cursor-pointer slider"
-              />
-              <div className="flex justify-between text-xs opacity-60 mt-1">
-                <span>2</span>
-                <span>{Math.max(2, Math.min(8, Math.floor(filteredMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))))}</span>
-              </div>
+              {(() => {
+                const minTeamsNeeded = genderMode === 'separated' 
+                  ? Object.keys(filteredMembers.reduce((acc, member) => {
+                      if (!acc[member.gender]) acc[member.gender] = [];
+                      acc[member.gender].push(member);
+                      return acc;
+                    }, {} as Record<string, Member[]>)).filter(gender => filteredMembers.some(m => m.gender === gender)).length
+                  : 2;
+                const baseMax = Math.max(2, Math.min(8, Math.floor(filteredMembers.length / (settings.teamClampRule === 'conservative' ? 2 : 1))));
+                const adjustedMin = Math.max(2, minTeamsNeeded);
+                const adjustedMax = Math.max(adjustedMin, baseMax);
+                
+                return (
+                  <>
+                    <input
+                      type="range"
+                      min={adjustedMin}
+                      max={adjustedMax}
+                      value={generationOptions.numberOfTeams}
+                      onChange={(e) => {
+                        const newOptions = { 
+                          ...generationOptions, 
+                          numberOfTeams: parseInt(e.target.value)
+                        };
+                        setGenerationOptions(newOptions);
+                      }}
+                      className="w-full h-2 bg-[#2a2a2a] rounded-lg appearance-none cursor-pointer slider"
+                    />
+                    <div className="flex justify-between text-xs opacity-60 mt-1">
+                      <span>{adjustedMin}</span>
+                      <span>{adjustedMax}</span>
+                    </div>
+                    {genderMode === 'separated' && minTeamsNeeded > 2 && (
+                      <div className="text-xs text-yellow-400 mt-1">
+                        Need at least {minTeamsNeeded} teams when separating by gender
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             {/* Age Range (for age-based teams) */}
@@ -470,7 +654,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   />
@@ -487,7 +670,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   />
@@ -512,7 +694,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   >
@@ -531,7 +712,6 @@ export default function TeamGenerator({ onNavigate }: TeamGeneratorProps) {
                         }
                       };
                       setGenerationOptions(newOptions);
-                      saveFiltersToStorage();
                     }}
                     className="flex-1 bg-[#2a2a2a] text-[#f2ebc4] border border-[#3a3a3a] rounded-lg px-3 py-2"
                   >

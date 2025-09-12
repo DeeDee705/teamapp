@@ -7,21 +7,31 @@ export function applyFilters(
   members: Member[],
   opts: {
     genderFilter: Record<Gender, boolean>;
-    ageRange?: { min?: number; max?: number };
+    ageRange?: { min?: number; max?: number }; // Legacy support
+    ageBands?: Array<{ min: number; max: number }>; // New multi-band support
     skillRange?: { min?: number; max?: number };
     customRules?: CustomRule[];
   }
 ): Member[] {
-  const { genderFilter, ageRange, skillRange, customRules } = opts;
+  const { genderFilter, ageRange, ageBands, skillRange, customRules } = opts;
 
   return members.filter((m) => {
     // gender
     if (!genderFilter[m.gender]) return false;
 
-    // age
+    // age filtering - support both legacy ageRange and new ageBands
     const age = ageOf(m);
-    if (ageRange?.min != null && age < ageRange.min) return false;
-    if (ageRange?.max != null && age > ageRange.max) return false;
+    
+    // If using age bands, member must fall within at least one band
+    if (ageBands && ageBands.length > 0) {
+      const inAnyBand = ageBands.some(band => age >= band.min && age <= band.max);
+      if (!inAnyBand) return false;
+    }
+    // Legacy age range support (fallback)
+    else if (ageRange) {
+      if (ageRange.min != null && age < ageRange.min) return false;
+      if (ageRange.max != null && age > ageRange.max) return false;
+    }
 
     // skill
     if (skillRange?.min != null && m.skillLevel < skillRange.min) return false;
