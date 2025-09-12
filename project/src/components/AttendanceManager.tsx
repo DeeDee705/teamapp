@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, memo } from 'react';
-import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User, ChevronDown, ChevronRight, Search, CheckSquare, Square, Plus } from 'lucide-react';
+import { ArrowLeft, MapPin, Edit2, Trash2, UserCheck, Star, User, ChevronDown, ChevronRight } from 'lucide-react';
 import { AppScreen, Location, Group, Member, Gender } from '../types';
 import { DataManager } from '../utils/dataManager';
 
@@ -64,13 +64,14 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   const debouncedSavePresence = useCallback((locationId: string, memberId: string, newVal: boolean) => {
     clearTimeout(presenceTimer[memberId]);
     presenceTimer[memberId] = setTimeout(() => {
-      dataManager.updateMemberPresence(locationId, memberId, newVal)
-        .catch(() => {
-          // Revert on failure
-          setPresenceByMemberId(prev => ({ ...prev, [memberId]: !newVal }));
-          setError('Failed to update presence - reverted change');
-          setTimeout(() => setError(''), 3000);
-        });
+      try {
+        dataManager.updateMemberPresence(locationId, memberId, newVal);
+      } catch (error) {
+        // Revert on failure
+        setPresenceByMemberId(prev => ({ ...prev, [memberId]: !newVal }));
+        setError('Failed to update presence - reverted change');
+        setTimeout(() => setError(''), 3000);
+      }
     }, 300);
   }, [dataManager]);
 
@@ -261,13 +262,11 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
   ));
 
   const GroupHeader = memo(({ 
-    location, 
     group, 
     isOpen, 
     memberCounts,
     isSelected
   }: { 
-    location: Location;
     group: Group | { id: 'unassigned'; name: 'Unassigned' }; 
     isOpen: boolean; 
     memberCounts: { total: number; present: number };
@@ -540,7 +539,6 @@ export default function AttendanceManager({ onNavigate }: AttendanceManagerProps
                           return (
                             <div key={group.id} className="space-y-2">
                               <GroupHeader
-                                location={location}
                                 group={group}
                                 isOpen={isGroupOpen}
                                 memberCounts={memberCounts}
