@@ -1,17 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Shuffle, Users, Filter, User, Star } from 'lucide-react';
-import { AppScreen, Location, Member } from '../types';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Shuffle, Filter, User, Star } from 'lucide-react';
+import { AppScreen, Member } from '../types';
 import { DataManager } from '../utils/dataManager';
 import { TeamBalancer } from '../utils/teamBalancer';
+import { SelectionBar } from './SelectionBar';
+import { useSelectionStore } from '../state/selectionStore';
 
 interface RandomPickerProps {
   onNavigate: (screen: AppScreen, data?: any) => void;
 }
 
 export default function RandomPicker({ onNavigate }: RandomPickerProps) {
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
-  const [availableMembers, setAvailableMembers] = useState<Member[]>([]);
+  const [attendancePool, setAttendancePool] = useState<Member[]>([]);
+  const [filteredMembers, setFilteredMembers] = useState<Member[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<Member[]>([]);
   const [pickCount, setPickCount] = useState(1);
   const [filters, setFilters] = useState({
@@ -25,45 +26,50 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
   const [isSelecting, setIsSelecting] = useState(false);
 
   const dataManager = DataManager.getInstance();
+  
+  // Selection store - subscribe to reactive values
+  const selectedMemberIds = useSelectionStore(state => state.selectedMemberIds);
 
+  // Update attendance pool when selection changes
   useEffect(() => {
-    loadData();
-  }, []);
+    const pool = dataManager.getPresentMembersByIds(selectedMemberIds);
+    setAttendancePool(pool);
+  }, [selectedMemberIds]);
 
+  // Apply filters whenever pool changes
   useEffect(() => {
-    updateAvailableMembers();
-  }, [selectedLocations]);
-
-  const loadData = () => {
-    const allLocations = dataManager.getLocations();
-    setLocations(allLocations);
-    if (allLocations.length > 0) {
-      setSelectedLocations([allLocations[0].id]);
-    }
-  };
-
-  const updateAvailableMembers = () => {
-    const members = dataManager.getPresentMembers(selectedLocations);
-    setAvailableMembers(members);
+    let filtered = [...attendancePool];
     
-    // Adjust pick count if it exceeds available members
-    if (pickCount > members.length) {
-      setPickCount(Math.max(1, members.length));
+    if (filters.gender) {
+      filtered = filtered.filter(m => m.gender === filters.gender);
     }
-  };
-
-  const toggleLocationSelection = (locationId: string) => {
-    setSelectedLocations(prev => {
-      if (prev.includes(locationId)) {
-        return prev.length > 1 ? prev.filter(id => id !== locationId) : prev;
-      } else {
-        return [...prev, locationId];
-      }
-    });
-  };
+    
+    if (filters.minAge || filters.maxAge) {
+      const minAge = parseInt(filters.minAge) || 0;
+      const maxAge = parseInt(filters.maxAge) || 100;
+      const currentYear = new Date().getFullYear();
+      filtered = filtered.filter(m => {
+        const age = currentYear - m.birthYear;
+        return age >= minAge && age <= maxAge;
+      });
+    }
+    
+    if (filters.minSkill || filters.maxSkill) {
+      const minSkill = parseInt(filters.minSkill) || 1;
+      const maxSkill = parseInt(filters.maxSkill) || 5;
+      filtered = filtered.filter(m => m.skillLevel >= minSkill && m.skillLevel <= maxSkill);
+    }
+    
+    setFilteredMembers(filtered);
+    
+    // Adjust pick count if it exceeds filtered members
+    if (pickCount > filtered.length) {
+      setPickCount(Math.max(1, filtered.length));
+    }
+  }, [attendancePool, filters, pickCount]);
 
   const pickRandomMembers = async () => {
-    if (availableMembers.length === 0) return;
+    if (filteredMembers.length === 0) return;
     
     setIsSelecting(true);
     
@@ -91,7 +97,7 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
     // Add a small delay for better UX
     await new Promise(resolve => setTimeout(resolve, 800));
     
-    const picked = TeamBalancer.getRandomMembers(availableMembers, pickCount, filterObject);
+    const picked = TeamBalancer.getRandomMembers(filteredMembers, pickCount, filterObject);
     setSelectedMembers(picked);
     setIsSelecting(false);
   };
@@ -106,27 +112,7 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
     ));
   };
 
-  const getFilteredMemberCount = () => {
-    let filtered = [...availableMembers];
-    
-    if (filters.gender) {
-      filtered = filtered.filter(m => m.gender === filters.gender);
-    }
-    
-    if (filters.minAge || filters.maxAge) {
-      const minAge = parseInt(filters.minAge) || 0;
-      const maxAge = parseInt(filters.maxAge) || 100;
-      filtered = filtered.filter(m => m.age >= minAge && m.age <= maxAge);
-    }
-    
-    if (filters.minSkill || filters.maxSkill) {
-      const minSkill = parseInt(filters.minSkill) || 1;
-      const maxSkill = parseInt(filters.maxSkill) || 5;
-      filtered = filtered.filter(m => m.skillLevel >= minSkill && m.skillLevel <= maxSkill);
-    }
-    
-    return filtered.length;
-  };
+  const getFilteredMemberCount = () => filteredMembers.length;
 
   return (
     <div className="min-h-screen bg-[#0d0d0d] text-[#f2ebc4]">
@@ -134,7 +120,7 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
       <div className="bg-[#f2e205] text-[#0d0d0d] p-4 flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <button
-            onClick={() => onNavigate('home')}
+            onClick={() => onNavigate('locations')}
             className="p-2 hover:bg-[#0d0d0d] hover:bg-opacity-10 rounded-lg transition-colors"
           >
             <ArrowLeft size={20} />
@@ -151,42 +137,27 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
         </button>
       </div>
 
+      
+      {/* Selection Bar */}
+      <SelectionBar />
+
       <div className="p-4 space-y-6">
-        {/* Location Selection */}
-        <div className="bg-[#1a1a1a] rounded-xl p-4">
-          <h3 className="text-lg font-semibold mb-3 flex items-center space-x-2">
-            <Users size={20} className="text-[#f2e205]" />
-            <span>Select Locations</span>
-          </h3>
-          <div className="space-y-2">
-            {locations.map(location => (
-              <label
-                key={location.id}
-                className="flex items-center space-x-3 p-3 rounded-lg hover:bg-[#2a2a2a] cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedLocations.includes(location.id)}
-                  onChange={() => toggleLocationSelection(location.id)}
-                  className="w-4 h-4 text-[#f2e205] bg-[#2a2a2a] border-gray-600 rounded focus:ring-[#f2e205]"
-                />
-                <div className="flex-1">
-                  <span className="font-medium">{location.name}</span>
-                  <span className="text-sm opacity-60 ml-2">
-                    ({location.members.filter(m => m.isPresent).length} present)
-                  </span>
-                </div>
-              </label>
-            ))}
+        
+        {/* No Selection Hint */}
+        {attendancePool.length === 0 && (
+          <div className="bg-[#1a1a1a] border border-[#3a3a3a] rounded-xl p-4 text-center">
+            <p className="text-sm opacity-80">
+              No one selected. Open the bar above to pick locations/groups/members.
+            </p>
           </div>
-        </div>
+        )}
 
         {/* Filters Panel */}
         {showFilters && (
           <div className="bg-[#1a1a1a] rounded-xl p-4">
             <h3 className="text-lg font-semibold mb-4 flex items-center space-x-2">
               <Filter size={20} className="text-[#f2e205]" />
-              <span>Filters</span>
+              <span>Filters ({filteredMembers.length} of {attendancePool.length} members)</span>
             </h3>
             
             <div className="space-y-4">
@@ -316,7 +287,7 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
         {/* Pick Button */}
         <button
           onClick={pickRandomMembers}
-          disabled={availableMembers.length === 0 || isSelecting || getFilteredMemberCount() === 0}
+          disabled={attendancePool.length === 0 || isSelecting || getFilteredMemberCount() === 0}
           className="w-full bg-[#f2e205] text-[#0d0d0d] py-4 rounded-xl font-semibold hover:bg-[#e6d600] disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
         >
           {isSelecting ? (
@@ -365,7 +336,7 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
                           }`}>
                             {member.gender}
                           </span>
-                          <span>Age: {member.age}</span>
+                          <span>Age: {new Date().getFullYear() - member.birthYear}</span>
                           <div className="flex items-center space-x-1">
                             <span>Skill:</span>
                             <div className="flex">
@@ -391,25 +362,31 @@ export default function RandomPicker({ onNavigate }: RandomPickerProps) {
           </div>
         )}
 
-        {/* Empty State */}
-        {availableMembers.length === 0 && (
+        {/* Empty State for filtered members */}
+        {attendancePool.length > 0 && filteredMembers.length === 0 && (
           <div className="text-center py-12">
-            <User size={64} className="mx-auto mb-4 opacity-40" />
-            <h3 className="text-xl font-semibold mb-2">No members available</h3>
+            <Filter size={64} className="mx-auto mb-4 opacity-40" />
+            <h3 className="text-xl font-semibold mb-2">No members match filters</h3>
             <p className="opacity-60 mb-6">
-              Add members to locations or mark them as present
+              Adjust your filters to include more members
             </p>
             <button
-              onClick={() => onNavigate('locations')}
+              onClick={() => setFilters({
+                gender: '',
+                minAge: '',
+                maxAge: '',
+                minSkill: '',
+                maxSkill: ''
+              })}
               className="bg-[#f2e205] text-[#0d0d0d] px-6 py-3 rounded-lg font-semibold hover:bg-[#e6d600] transition-colors"
             >
-              Manage Locations
+              Clear Filters
             </button>
           </div>
         )}
       </div>
 
-      <style jsx>{`
+      <style>{`
         @keyframes slideInUp {
           from {
             opacity: 0;

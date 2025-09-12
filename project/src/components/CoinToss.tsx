@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, RotateCcw } from 'lucide-react';
-import { AppScreen } from '../types';
+import { AppScreen, Member } from '../types';
+import { DataManager } from '../utils/dataManager';
+import { SelectionBar } from './SelectionBar';
+import { useSelectionStore } from '../state/selectionStore';
 
 interface CoinTossProps {
   onNavigate: (screen: AppScreen) => void;
@@ -10,6 +13,18 @@ export default function CoinToss({ onNavigate }: CoinTossProps) {
   const [isFlipping, setIsFlipping] = useState(false);
   const [result, setResult] = useState<'heads' | 'tails' | null>(null);
   const [flipHistory, setFlipHistory] = useState<Array<{ result: 'heads' | 'tails'; timestamp: Date }>>([]);
+  const [attendancePool, setAttendancePool] = useState<Member[]>([]);
+
+  const dataManager = DataManager.getInstance();
+  
+  // Selection store - subscribe to reactive values
+  const selectedMemberIds = useSelectionStore(state => state.selectedMemberIds);
+
+  // Update attendance pool when selection changes
+  useEffect(() => {
+    const pool = dataManager.getPresentMembersByIds(selectedMemberIds);
+    setAttendancePool(pool);
+  }, [selectedMemberIds]);
 
   const flipCoin = async () => {
     if (isFlipping) return;
@@ -77,7 +92,23 @@ export default function CoinToss({ onNavigate }: CoinTossProps) {
         )}
       </div>
 
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-80px)] p-4 space-y-8">
+      {/* Selection Bar */}
+      <SelectionBar />
+
+      <div className="p-4">
+        
+        {/* No Selection Hint */}
+        {attendancePool.length === 0 && (
+          <div className="bg-[#1a1a1a] border border-[#3a3a3a] rounded-xl p-4 text-center mb-6">
+            <p className="text-sm opacity-80">
+              No one selected. Open the bar above to pick locations/groups/members.
+            </p>
+          </div>
+        )}
+
+      </div>
+
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] p-4 space-y-8">
         {/* Coin Display */}
         <div className="relative">
           <div 
@@ -185,7 +216,7 @@ export default function CoinToss({ onNavigate }: CoinTossProps) {
         )}
       </div>
 
-      <style jsx>{`
+      <style>{`
         @keyframes fadeIn {
           from {
             opacity: 0;
